@@ -1,0 +1,77 @@
+
+// IGNORE
+WHITESPACE = _{ " " | "\t" | "\n" | "\r" }
+COMMENT = _{ "\\\\" ~ (!"\n" ~ ANY)* ~ "\n" }
+
+// FILE PARSING
+main = _{ SOI ~ (program ~ (ANY)*)+ ~EOI }
+
+// look for {program} environments
+program = _{
+  (!"\\begin{program}" ~ ANY)* ~ "\\begin{program}" ~ 
+  (statement)* ~
+  (!"\\end{program}" ~ ANY)* ~ "\\end{program}"
+}
+
+// in {program}, look for math environments
+statement = {
+	(!"$" ~ ANY)* ~ "$" ~ expr ~ "$"
+}
+
+expr = { 
+	prefix? ~ primary ~ postfix? ~ (infix ~ prefix? ~ primary ~ postfix? )* 
+}
+
+// ATOMIC EXPRESSIONS
+primary   = _{ 
+  // number types
+  real |
+  integer | 
+  constant |
+  // brackets
+  "(" ~ expr ~ ")" | 
+  "\\left"~"(" ~ expr ~ "\\right"~")" | 
+  "{" ~ expr ~ "}" | 
+  // {} bracketed expressions
+  frac |
+  // functions
+  fn_unary
+} 
+
+// LITERALS
+real = @{ (ASCII_NONZERO_DIGIT ~ ASCII_DIGIT+ | ASCII_DIGIT) ~ "." ~ (ASCII_DIGIT)* }
+integer = @{ (ASCII_NONZERO_DIGIT ~ ASCII_DIGIT+ | ASCII_DIGIT) }
+
+// CONSTANTS
+constant = _{ e | pi }
+e = @{"e"}
+pi = @{"\\pi"}
+
+// BRACKETED {}
+frac = { "\\frac{" ~ expr ~ "}" ~ "{" ~ expr ~ "}"}
+
+// FUNCTIONS
+// unary, potentially no brackets
+argument = {primary}
+fn_unary = { unaries ~ argument  }
+unaries = _{ cos | sin | tan | exp | ln }
+cos = {"\\cos"}
+sin = {"\\sin"}
+tan = {"\\tan"}
+exp = {"\\exp"}
+ln = {"\\ln"}
+
+// OPERATORS
+// infix
+infix     = _{ add | sub | mul | div | pow }
+add       = { "+" } // Addition
+sub       = { "-" } // Subtraction
+mul       = { "\\cdot" | "\\," } // Multiplication
+div       = { "/" } // Division
+pow       = { "^" } // Exponentiation
+// prefix
+prefix    = _{ neg }
+neg       = { "-" } // Negation
+// postfix
+postfix   = _{ fac }
+fac       = { "!" } // Factorial
