@@ -3,26 +3,34 @@ use std::f64::consts::{E, PI};
 use pest::{iterators::Pairs, pratt_parser::{Assoc, Op, PrattParser}, Parser};
 use pest_derive::Parser;
 use lazy_static::lazy_static;
+use phf::phf_map;
 
 #[derive(Debug)]
 enum Expr {
     Num(f64),
+    Ident(String),
 
     Neg(Box<Expr>),
     Fac(Box<Expr>),
 
-    Cos(Box<Expr>),
-    Sin(Box<Expr>),
-    Tan(Box<Expr>),
-    Exp(Box<Expr>),
-    Ln(Box<Expr>),
+    // Cos(Box<Expr>),
+    // Sin(Box<Expr>),
+    // Tan(Box<Expr>),
+    // Exp(Box<Expr>),
+    // Ln(Box<Expr>),
 
     Add(Box<Expr>, Box<Expr>),
     Sub(Box<Expr>, Box<Expr>),
     Mul(Box<Expr>, Box<Expr>),
+    IMul(Box<Expr>, Box<Expr>),
     Div(Box<Expr>, Box<Expr>),
     Pow(Box<Expr>, Box<Expr>),
 }
+
+static CONSTANTS: phf::Map<&'static str, f64> = phf_map! {
+    r"e" => E,
+    r"\pi" => PI,
+};
 
 lazy_static! {
     static ref PRATT_PARSER: PrattParser<Rule> = {
@@ -31,6 +39,7 @@ lazy_static! {
 
         PrattParser::new()
             .op(Op::infix(add, Left) | Op::infix(sub, Left) | Op::prefix(neg))
+            .op(Op::infix(mul_implicit, Left))
             .op(Op::infix(mul, Left) | Op::infix(div, Left))
             .op(Op::infix(pow, Right) | Op::postfix(fac))
     };
@@ -46,23 +55,8 @@ fn parse_expr(expression: Pairs<Rule>) -> Expr {
             // literals
             Rule::real => Expr::Num(primary.as_str().parse::<f64>().unwrap()),
             Rule::integer => Expr::Num(primary.as_str().parse::<f64>().unwrap()),
-            // constants
-            Rule::e => Expr::Num(E),
-            Rule::pi => Expr::Num(PI),
-            // unary functions
-            Rule::fn_unary => {
-                let mut p = primary.into_inner();
-                let func = p.next().unwrap();
-                let arg = parse_expr(p.next().unwrap().into_inner());
-                match func.as_rule(){
-                    Rule::cos => Expr::Cos(Box::new(arg)),
-                    Rule::sin => Expr::Sin(Box::new(arg)),
-                    Rule::tan => Expr::Tan(Box::new(arg)),
-                    Rule::exp => Expr::Exp(Box::new(arg)),
-                    Rule::ln => Expr::Ln(Box::new(arg)),
-                    _ => unreachable!(),
-                }
-            }
+            // identifiers
+            Rule::identifier => Expr::Ident(primary.as_str().to_owned()),
             // {}-bracketed expressions
             Rule::frac => {
                 let mut p = primary.into_inner();
@@ -87,6 +81,7 @@ fn parse_expr(expression: Pairs<Rule>) -> Expr {
             Rule::mul => Expr::Mul(Box::new(lhs), Box::new(rhs)),
             Rule::div => Expr::Div(Box::new(lhs), Box::new(rhs)),
             Rule::pow => Expr::Pow(Box::new(lhs), Box::new(rhs)),
+            Rule::mul_implicit => Expr::IMul(Box::new(lhs), Box::new(rhs)),
             _ => unreachable!(),
         })
         .map_postfix(|lhs,postfix|{
@@ -117,14 +112,16 @@ fn eval_expr(expr: &Expr) -> f64{
         Expr::Fac(x) => factorial(eval_expr(x)),
         Expr::Add(lhs, rhs) => eval_expr(lhs) + eval_expr(rhs),
         Expr::Sub(lhs, rhs) => eval_expr(lhs) - eval_expr(rhs),
+        Expr::IMul(lhs, rhs) => eval_expr(lhs) * eval_expr(rhs),
         Expr::Mul(lhs, rhs) => eval_expr(lhs) * eval_expr(rhs),
         Expr::Div(lhs, rhs) => eval_expr(lhs) / eval_expr(rhs),
         Expr::Pow(lhs, rhs) => eval_expr(lhs).powf(eval_expr(rhs)),
-        Expr::Cos(x) => eval_expr(x).cos(),
-        Expr::Sin(x) => eval_expr(x).sin(),
-        Expr::Tan(x) => eval_expr(x).tan(),
-        Expr::Exp(x) => eval_expr(x).exp(),
-        Expr::Ln(x) => eval_expr(x).ln(),
+        Expr::Ident(name) => if let Some(cnst) = CONSTANTS.get(name){
+                        *cnst
+            } else {
+                // TODO: Error handling
+                panic!("Undefined identifier {} in expression", name)
+            },
     }
 }
 
@@ -134,10 +131,10 @@ pub fn main(){
             for stmt in res{
                 match stmt.as_rule(){
                     Rule::EOI => {},
-                    Rule::statement => {
+                    Rule::math_evn => {
                         let expr = parse_expr(stmt.into_inner());
                         let val = eval_expr(&expr);
-                        println!("{:?}, result: {}", expr, val);
+                        println!("{:?}\n\tresult: {}", expr, val);
                     },
                     _ => unreachable!()
                 };

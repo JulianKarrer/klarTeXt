@@ -1,7 +1,7 @@
 
 // IGNORE
-WHITESPACE = _{ " " | "\t" | "\n" | "\r" }
-COMMENT = _{ "\\\\" ~ (!"\n" ~ ANY)* ~ "\n" }
+WHITESPACE = _{ " " | "\t" | "\n" | "\r" | "\\," |"\\quad" }
+COMMENT = _{ "%" ~ (!"\n" ~ ANY)* ~ "\n" }
 
 // FILE PARSING
 main = _{ SOI ~ (program ~ (ANY)*)+ ~EOI }
@@ -9,64 +9,64 @@ main = _{ SOI ~ (program ~ (ANY)*)+ ~EOI }
 // look for {program} environments
 program = _{
   (!"\\begin{program}" ~ ANY)* ~ "\\begin{program}" ~ 
-  (statement)* ~
+  (math_evn)* ~
   (!"\\end{program}" ~ ANY)* ~ "\\end{program}"
 }
 
 // in {program}, look for math environments
-statement = {
+math_evn = {
 	(!"$" ~ ANY)* ~ "$" ~ expr ~ "$"
 }
 
-expr = { 
+expr = ${ 
 	prefix? ~ primary ~ postfix? ~ (infix ~ prefix? ~ primary ~ postfix? )* 
 }
 
 // ATOMIC EXPRESSIONS
 primary   = _{ 
   // number types
-  real |
-  integer | 
-  constant |
+  number_literal | 
   // brackets
   "(" ~ expr ~ ")" | 
   "\\left"~"(" ~ expr ~ "\\right"~")" | 
   "{" ~ expr ~ "}" | 
-  // {} bracketed expressions
-  frac |
-  // functions
-  fn_unary
+  // {} enclosed expressions
+  enclosed |
+  // Identifiers 
+  // (after \frac etc. since \phi is valid)
+  identifier 
 } 
 
 // LITERALS
+number_literal = _{ real | integer }
 real = @{ (ASCII_NONZERO_DIGIT ~ ASCII_DIGIT+ | ASCII_DIGIT) ~ "." ~ (ASCII_DIGIT)* }
 integer = @{ (ASCII_NONZERO_DIGIT ~ ASCII_DIGIT+ | ASCII_DIGIT) }
 
-// CONSTANTS
-constant = _{ e | pi }
-e = @{"e"}
-pi = @{"\\pi"}
-
-// BRACKETED {}
+// BRACKETED, ENCLOSED {}
+enclosed = _{ frac }
 frac = { "\\frac{" ~ expr ~ "}" ~ "{" ~ expr ~ "}"}
 
-// FUNCTIONS
-// unary, potentially no brackets
-argument = {primary}
-fn_unary = { unaries ~ argument  }
-unaries = _{ cos | sin | tan | exp | ln }
-cos = {"\\cos"}
-sin = {"\\sin"}
-tan = {"\\tan"}
-exp = {"\\exp"}
-ln = {"\\ln"}
+// IDENTIFIERS
+// keywords are names that may not follow after \
+// e.g. \phi is a valid identifier, \left is not
+keyword = { "\\left" | "\\right" | "\\cdot" | "\\frac" }
+identifier = @{ (!keyword ~ (simple_identifier | latex_symbol)) ~ subscript? }
+simple_identifier = _{ ASCII_ALPHA }
+latex_symbol = _{ "\\" ~ ASCII_ALPHA+ }
+subscript = _{ "_" ~ "{" ~ ASCII_ALPHA* ~ "}" | "_" ~ ASCII_ALPHANUMERIC }
 
 // OPERATORS
 // infix
-infix     = _{ add | sub | mul | div | pow }
+infix     = _{ 
+	// optional whitespace around an infix operator is ok
+	WHITESPACE* ~ (add | sub | mul | div | pow ) ~ WHITESPACE*
+    // but also try to parse semantic white space for implicit mul
+    | mul_implicit
+}
 add       = { "+" } // Addition
 sub       = { "-" } // Subtraction
-mul       = { "\\cdot" | "\\," } // Multiplication
+mul       = { "\\cdot" } // Multiplication
+mul_implicit = { WHITESPACE* }
 div       = { "/" } // Division
 pow       = { "^" } // Exponentiation
 // prefix
