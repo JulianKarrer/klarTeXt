@@ -1,9 +1,17 @@
-use std::f64::consts::{E, PI};
-
-use pest::{iterators::Pairs, pratt_parser::{Assoc, Op, PrattParser}, Parser};
+use std::{collections::{HashMap, HashSet}, f64::consts::{E, PI}};
+use pest::{iterators::{Pair, Pairs}, pratt_parser::{Assoc, Op, PrattParser}, Parser};
 use pest_derive::Parser;
 use lazy_static::lazy_static;
-use phf::phf_map;
+use topo_sort::{SortResults, TopoSort};
+
+type Program = Vec<Statement>;
+type Program1 = (Program, HashMap<String, f64>);
+
+#[derive(Debug)]
+enum Statement {
+    Definition(String, Expr),
+    Print(Expr, i64),
+}
 
 #[derive(Debug)]
 enum Expr {
@@ -27,11 +35,6 @@ enum Expr {
     Pow(Box<Expr>, Box<Expr>),
 }
 
-static CONSTANTS: phf::Map<&'static str, f64> = phf_map! {
-    r"e" => E,
-    r"\pi" => PI,
-};
-
 lazy_static! {
     static ref PRATT_PARSER: PrattParser<Rule> = {
         use Rule::*;
@@ -43,6 +46,11 @@ lazy_static! {
             .op(Op::infix(mul, Left) | Op::infix(div, Left))
             .op(Op::infix(pow, Right) | Op::postfix(fac))
     };
+
+    static ref CONSTANTS:HashMap<String, f64> = HashMap::from([
+        (r"e".to_owned(), E),
+        (r"\pi".to_owned(), PI),
+    ]);
 }
 
 #[derive(Parser)]
@@ -93,7 +101,46 @@ fn parse_expr(expression: Pairs<Rule>) -> Expr {
         .parse(expression)
 }
 
-fn eval_expr(expr: &Expr) -> f64{
+fn parse_stmt(stmt: Pair<'_, Rule>, output_counter:&mut i64)->Option<Statement>{
+    match stmt.as_rule(){
+        Rule::expr_statement => {None},
+        Rule::print_statement => {
+            let expr = parse_expr(
+                stmt.into_inner().next().unwrap().into_inner()
+            );
+            *output_counter += 1;
+            Some(Statement::Print(expr, *output_counter))
+        },
+        Rule::definition => {
+            let mut def = stmt.into_inner();
+            let name = def.next().unwrap().as_str();
+            let expr = parse_expr(def.next().unwrap().into_inner());
+            Some(Statement::Definition(name.to_owned(), expr))
+        },
+        _ => unreachable!(),
+    }
+}
+
+fn parse_main(input: &str)->Program{
+    let mut output_counter = 0;
+    match TexParser::parse(Rule::main, input){
+        Ok(res) => {
+                res.into_iter().map(|stmt|{
+                    match stmt.as_rule(){
+                        Rule::EOI => {None},
+                        Rule::statement => {
+                            parse_stmt(stmt.into_inner().next().unwrap(), &mut output_counter)
+                        },
+                        _ => unreachable!()
+                    }
+                }).flatten().collect()
+        },
+        Err(err) => panic!("{:?}", err), // TODO error handling
+    }
+}
+
+// SEMANTICS - DEFINITIONAL INTERPRETER
+fn eval_expr(expr: &Expr, env:&HashMap<String, f64>) -> f64{
     fn factorial(n: f64) -> f64 {
         if n < 0.0 {
             panic!("Factorial is not defined for negative numbers.");
@@ -108,38 +155,101 @@ fn eval_expr(expr: &Expr) -> f64{
     }
     match expr{
         Expr::Num(x) => *x,
-        Expr::Neg(x) => -eval_expr(x),
-        Expr::Fac(x) => factorial(eval_expr(x)),
-        Expr::Add(lhs, rhs) => eval_expr(lhs) + eval_expr(rhs),
-        Expr::Sub(lhs, rhs) => eval_expr(lhs) - eval_expr(rhs),
-        Expr::IMul(lhs, rhs) => eval_expr(lhs) * eval_expr(rhs),
-        Expr::Mul(lhs, rhs) => eval_expr(lhs) * eval_expr(rhs),
-        Expr::Div(lhs, rhs) => eval_expr(lhs) / eval_expr(rhs),
-        Expr::Pow(lhs, rhs) => eval_expr(lhs).powf(eval_expr(rhs)),
+        Expr::Neg(x) => -eval_expr(x, env),
+        Expr::Fac(x) => factorial(eval_expr(x, env)),
+        Expr::Add(lhs, rhs) => eval_expr(lhs, env) + eval_expr(rhs, env),
+        Expr::Sub(lhs, rhs) => eval_expr(lhs, env) - eval_expr(rhs, env),
+        Expr::IMul(lhs, rhs) => eval_expr(lhs, env) * eval_expr(rhs, env),
+        Expr::Mul(lhs, rhs) => eval_expr(lhs, env) * eval_expr(rhs, env),
+        Expr::Div(lhs, rhs) => eval_expr(lhs, env) / eval_expr(rhs, env),
+        Expr::Pow(lhs, rhs) => eval_expr(lhs, env).powf(eval_expr(rhs, env)),
         Expr::Ident(name) => if let Some(cnst) = CONSTANTS.get(name){
-                        *cnst
+                // look for predefined constants
+                *cnst
             } else {
-                // TODO: Error handling
-                panic!("Undefined identifier {} in expression", name)
+                if let Some(cnst) = env.get(name){
+                    // then look for user-defined constants
+                    *cnst
+                } else {
+                    // TODO: Error handling
+                    panic!("Undefined identifier {} in expression", name)
+                }
             },
     }
 }
 
-pub fn main(){
-    match TexParser::parse(Rule::main, include_str!("../test/test1.tex")){
-        Ok(res) => {
-            for stmt in res{
-                match stmt.as_rule(){
-                    Rule::EOI => {},
-                    Rule::math_evn => {
-                        let expr = parse_expr(stmt.into_inner());
-                        let val = eval_expr(&expr);
-                        println!("{:?}\n\tresult: {}", expr, val);
+
+fn get_names(expr: &Expr)->HashSet<String>{
+    match expr{
+        // base cases
+        Expr::Num(_) => {HashSet::new()}, 
+        Expr::Ident(name) => HashSet::from([name.to_owned()]),
+        // unary recursive cases
+        Expr::Neg(expr) | Expr::Fac(expr) 
+            => get_names(expr),
+        // binary recursive cases
+        Expr::Add(expr1, expr2) | 
+        Expr::Sub(expr1, expr2) |
+        Expr::Mul(expr1, expr2) |
+        Expr::IMul(expr1, expr2) |
+        Expr::Div(expr1, expr2) |
+        Expr::Pow(expr1, expr2) 
+            => &get_names(expr1) | &get_names(&expr2),
+    }
+}
+
+fn resolve_definitions(prog:Program)->Program1{
+    let mut dependencies = TopoSort::with_capacity(prog.len());
+    let mut definitions = HashMap::new();
+    let mut prints = vec![];
+    let mut env = HashMap::new();
+    
+    // find the set of names that each definition depends on
+    for stmt in prog{
+        match stmt{
+            Statement::Definition(name, expr) => {
+                        dependencies.insert_from_set(name.to_owned(), get_names(&expr));
+                        definitions.insert(name, expr);
                     },
-                    _ => unreachable!()
-                };
+            Statement::Print(expr, c) => prints.push(Statement::Print(expr, c)),
+        }
+    }
+
+    // topologically sort the dependencies or detect a cycle
+    match dependencies.into_vec_nodes() {
+        SortResults::Partial(_) => panic!("Cyclic definitions!"),
+        SortResults::Full(nodes) => {
+            for name in nodes{
+                let expr = definitions.get(&name).unwrap();
+                // evaluate the expression:
+                // this must be possible, since definitions are now topologically ordered
+                let res = eval_expr(expr, &env);
+                // add the resolved definition to the environment
+                env.insert(name.to_owned(), res);
             }
         },
-        Err(err) => println!("{:?}", err),
     }
+
+    // return the resolved definitions along with other statements
+    (prints, env)
+}
+
+fn debug_run(prog:Program, env: HashMap<String, f64>, _counter:i64){
+    println!("DEFINITIONS: -----------");
+    for (k,v) in &env{
+        println!("{} = {}", k, v)
+    }
+    println!("PRINTS: ----------------");
+    for stmt in prog{
+        match stmt {
+            Statement::Print(expr, c) => println!("{} >>> {}", c, eval_expr(&expr, &env)),
+            _ => {}
+        }
+    }
+}
+
+pub fn main(){
+    let p0 = parse_main(include_str!("../test/test1.tex"));
+    let (p1, env) = resolve_definitions(p0);
+    debug_run(p1, env, 0);
 }

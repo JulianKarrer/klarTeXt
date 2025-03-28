@@ -13,9 +13,14 @@ program = _{
   (!"\\end{program}" ~ ANY)* ~ "\\end{program}"
 }
 
+statement = { definition | print_statement | expr_statement }
+expr_statement = { expr }
+print_statement = {"\\print{" ~ expr ~ "}"}
+definition = { identifier ~ "=" ~ expr }
+
 // in {program}, look for math environments
-math_evn = {
-	(!"$" ~ ANY)* ~ "$" ~ expr ~ "$"
+math_evn = _{
+	(!"$" ~ ANY)* ~ "$" ~ statement ~ "$"
 }
 
 expr = ${ 
