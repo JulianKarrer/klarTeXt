@@ -1,15 +1,18 @@
 \newcounter{klarCall}
-
 \newcommand{\callKlarTeXt}{%
-  \stepcounter{klarCall}%
   \immediate\write18{%
-    echo "$(realpath \jobname.tex) \theklarCall" > klarTeXt_\jobname_\theklarCall.tex%
+    ../target/release/klarTeXt "$(realpath \jobname.tex)"%
   }%
-  \input{klarTeXt_\jobname_\theklarCall.tex}%
 }
+
+\AtBeginDocument{\callKlarTeXt}
 
 \newenvironment{program}[1]
 {%
-    \newcommand{\print}[1]{{\texttt{print}\left(##1\right)}} % use \callKlarTeXt in here
+    \newcommand{\print}[1]{{%
+      ##1 = %
+      \stepcounter{klarCall}%
+      \input{klarTeXt_\jobname_\theklarCall.tex}%
+    }} 
 }
 {}

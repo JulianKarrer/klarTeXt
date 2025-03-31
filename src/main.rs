@@ -4,13 +4,14 @@ use lazy_static::lazy_static;
 use pest::{
     iterators::{Pair, Pairs},
     pratt_parser::{Assoc, Op, PrattParser},
-    Parser,
 };
-use pest_derive::Parser;
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     f64::consts::{E, PI},
+    fs::{self, File},
+    io::Write,
     ops::Range,
+    path::Path,
     process::exit,
 };
 
@@ -161,110 +162,110 @@ fn handle_errs<T>(res: Result<T, Error>, src: &str, filename: &str) -> T {
         Err(err) => {
             match &err {
                 Error::ParseError(_,note) => err_report(
-                    vec![(
-                        (&err).span(),
-                        "the unexpected input is here",
-                    )],
-                    "Syntax Error",
-                    &format!("There is a syntax error in your program, which caused parsing to fail.\n{}", note),
-                    filename,
-                    src,
-                    err.span(),
-                ),
+                                vec![(
+                                    (&err).span(),
+                                    "the unexpected input is here",
+                                )],
+                                "Syntax Error",
+                                &format!("There is a syntax error in your program, which caused parsing to fail.\n{}", note),
+                                filename,
+                                src,
+                                err.span(),
+                            ),
                 Error::DefMissing(_, name) => err_report(
-                    vec![(
-                        (&err).span(),
-                        &format!("The identifier {} is undefined.", name),
-                    )],
-                    "Undefined identifier",
-                    "It does not matter in which order you define identifiers using '=', but this one is never defined.\nMaybe you meant to use a predefined identifier like e or π?",
-                    filename,
-                    src,
-                    err.span(),
-                ),
+                                vec![(
+                                    (&err).span(),
+                                    &format!("The identifier {} is undefined.", name),
+                                )],
+                                "Undefined identifier",
+                                "It does not matter in which order you define identifiers using '=', but this one is never defined.\nMaybe you meant to use a predefined identifier like e or π?",
+                                filename,
+                                src,
+                                err.span(),
+                            ),
                 Error::DefMultiply(_, name) => err_report(
-                    vec![(
-                        (&err).span(),
-                        &format!("The identifier {} was defined at least twice", name),
-                    )],
-                    "Multiply defined identifier",
-                    "Definitions using '=' are static, immutable, single assignments of a constant expression to a name.\nYou cannot bind an expression to the same name twice.",
-                    filename,
-                    src,
-                    err.span(),
-                ),
+                                vec![(
+                                    (&err).span(),
+                                    &format!("The identifier {} was defined at least twice", name),
+                                )],
+                                "Multiply defined identifier",
+                                "Definitions using '=' are static, immutable, single assignments of a constant expression to a name.\nYou cannot bind an expression to the same name twice.",
+                                filename,
+                                src,
+                                err.span(),
+                            ),
                 Error::DefCircular(cycle) => {
-                    err_report(
-                    cycle.iter().map(|(name, span, depends_on)|(
-                        span.into(), format!("{} depends on {}", name, depends_on)
-                    )).collect(),
-                    "Cyclic Definitions",
-                    "Cyclic Definition detected.\nCompile-time recursion using the static definition '=' is not currently supported.\nDefinitions with '=' bind an expression immutably to a single name forever.\nMaybe you meant to use a mutable assignment?",
-                    filename,
-                    src,
-                    err.span(),
-                )},
+                                err_report(
+                                cycle.iter().map(|(name, span, depends_on)|(
+                                    span.into(), format!("{} depends on {}", name, depends_on)
+                                )).collect(),
+                                "Cyclic Definitions",
+                                "Cyclic Definition detected.\nCompile-time recursion using the static definition '=' is not currently supported.\nDefinitions with '=' bind an expression immutably to a single name forever.\nMaybe you meant to use a mutable assignment?",
+                                filename,
+                                src,
+                                err.span(),
+                            )},
                 Error::FactorialNeg(_) => err_report(
-                                vec![(
-                                    err.span().start..err.span().end-1,
-                                    "This expression evaluates to a negative number.",
-                                )],
-                                "Negative Argument to Factorial",
-                                "The Factorial function '!' is only defined for non-negative integers.",
-                                filename,
-                                src,
-                                err.span(),
-                            ),
+                                            vec![(
+                                                err.span().start..err.span().end-1,
+                                                "This expression evaluates to a negative number.",
+                                            )],
+                                            "Negative Argument to Factorial",
+                                            "The Factorial function '!' is only defined for non-negative integers.",
+                                            filename,
+                                            src,
+                                            err.span(),
+                                        ),
                 Error::FactorialFloat(_) => err_report(
-                                vec![(
-                                    err.span().start..err.span().end-1,
-                                    "This expression evaluates to a non-integer.",
-                                )],
-                                "Non-Integer Argument to Factorial",
-                                "The Factorial function '!' is only defined for non-negative integers.\nPerhaps you want to use a more general Gamma function Γ?",
-                                filename,
-                                src,
-                                err.span(),
-                            ),
+                                            vec![(
+                                                err.span().start..err.span().end-1,
+                                                "This expression evaluates to a non-integer.",
+                                            )],
+                                            "Non-Integer Argument to Factorial",
+                                            "The Factorial function '!' is only defined for non-negative integers.\nPerhaps you want to use a more general Gamma function Γ?",
+                                            filename,
+                                            src,
+                                            err.span(),
+                                        ),
                 Error::DivByZero(_) => err_report(
+                                            vec![(
+                                                err.span(),
+                                                "This division results in an undefined value",
+                                            )],
+                                            "Division by Zero",
+                                            "You can sometimes avoid divisions by zero by rearranging terms.\nMultiplication implements short-circuiting, so 'zero times x' is always zero, even if x is undefined.\nIn that case, evaluation is left-to-right and the order of terms matters!",
+                                            filename,
+                                            src,
+                                            err.span(),
+                                        ),
+                Error::ImpMulRhsNum(lhs, rhs) => err_report(
                                 vec![(
-                                    err.span(),
-                                    "This division results in an undefined value",
+                                    lhs.into(),
+                                    "this expression gets multiplied",
+                                ),(
+                                    rhs.into(),
+                                    "with a numerical literal on the right-hand side",
                                 )],
-                                "Division by Zero",
-                                "You can sometimes avoid divisions by zero by rearranging terms.\nMultiplication implements short-circuiting, so 'zero times x' is always zero, even if x is undefined.\nIn that case, evaluation is left-to-right and the order of terms matters!",
+                                "Implicit multiplication with a number on the right side",
+                                "Implicit multiplication is meant to be used for terms like:\n - 3x + 2y\n - 2(x+3)\nBut here, there is a number on the right-hand side of the multiplication.\nThis is an error, since it is usually unintended.",
                                 filename,
                                 src,
                                 err.span(),
                             ),
-                Error::ImpMulRhsNum(lhs, rhs) => err_report(
-                    vec![(
-                        lhs.into(),
-                        "this expression gets multiplied",
-                    ),(
-                        rhs.into(),
-                        "with a numerical literal on the right-hand side",
-                    )],
-                    "Implicit multiplication with a number on the right side",
-                    "Implicit multiplication is meant to be used for terms like:\n - 3x + 2y\n - 2(x+3)\nBut here, there is a number on the right-hand side of the multiplication.\nThis is an error, since it is usually unintended.",
-                    filename,
-                    src,
-                    err.span(),
-                ),
                 Error::ImpMulNumNum(lhs, rhs) => err_report(
-                    vec![(
-                        lhs.into(),
-                        "this is a number",
-                    ),(
-                        rhs.into(),
-                        "this is also a number",
-                    )],
-                    "Implicit multiplication of two numbers",
-                    "Implicit multiplication is meant to be used for terms like:\n - 3x + 2y\n - 2(x+3)\nBut here it was used to multiply two numbers.\nThis is an error, since it is usually unintended.",
-                    filename,
-                    src,
-                    err.span(),
-                ),
+                                vec![(
+                                    lhs.into(),
+                                    "this is a number",
+                                ),(
+                                    rhs.into(),
+                                    "this is also a number",
+                                )],
+                                "Implicit multiplication of two numbers",
+                                "Implicit multiplication is meant to be used for terms like:\n - 3x + 2y\n - 2(x+3)\nBut here it was used to multiply two numbers.\nThis is an error, since it is usually unintended.",
+                                filename,
+                                src,
+                                err.span(),
+                            ),
             }
             exit(1)
         }
@@ -329,7 +330,10 @@ fn parse_error(err: pest::error::Error<Rule>) -> Error {
                     [r] => format!("The parser expected to see {}.", rule_description(r)),
                     _ => format!(
                         "The parser expected to see one of the following: \n\t- {}",
-                        positives.iter().map(|r| rule_description(*r)).join("\n\t- ")
+                        positives
+                            .iter()
+                            .map(|r| rule_description(*r))
+                            .join("\n\t- ")
                     ),
                 };
                 if positives.len() > 0 {
@@ -366,7 +370,7 @@ lazy_static! {
         HashMap::from([(r"e".to_owned(), E), (r"\pi".to_owned(), PI),]);
 }
 
-#[derive(Parser)]
+#[derive(pest_derive::Parser)]
 #[grammar = "grammar.pest"] // relative to src
 struct TexParser;
 
@@ -455,7 +459,7 @@ fn parse_stmt(stmt: Pair<'_, Rule>, output_counter: &mut i64) -> Option<Stmt> {
 
 fn parse_main(input: &str) -> Result<Program, Error> {
     let mut output_counter = 0;
-    match TexParser::parse(Rule::main, input) {
+    match <TexParser as pest::Parser<Rule>>::parse(Rule::main, input) {
         Ok(res) => Ok(res
             .into_iter()
             .map(|stmt| match stmt.as_rule() {
@@ -463,7 +467,10 @@ fn parse_main(input: &str) -> Result<Program, Error> {
                 Rule::statement => {
                     parse_stmt(stmt.into_inner().next().unwrap(), &mut output_counter)
                 }
-                _ => {println!("{:?}", stmt); unreachable!()},
+                _ => {
+                    println!("{:?}", stmt);
+                    unreachable!()
+                }
             })
             .flatten()
             .collect()),
@@ -620,12 +627,12 @@ fn topological_visit(
 
     temporary.push(node.to_string());
     // if graph.get returns None, node is an undefined identifier
-    if let Some(nbrs) = graph.get(node){
+    if let Some(nbrs) = graph.get(node) {
         for m in nbrs {
             topological_visit(m, permanent, temporary, unmarked, l, definitions, graph)?;
         }
-    } 
-    
+    }
+
     temporary.pop();
 
     permanent.insert(node.to_string());
@@ -667,7 +674,7 @@ fn resolve_const_definitions(prog: Program) -> Result<Program1, Error> {
         // filter out predefined constants
         .filter(|n| !PREDEFINED_CONSTANTS.contains_key(*n))
     {
-        if let Some(expr) = definitions.get(name){
+        if let Some(expr) = definitions.get(name) {
             // evaluate the expression:
             // this must be possible, since definitions are now topologically ordered
             let res = eval_expr(expr, &env)?;
@@ -680,7 +687,7 @@ fn resolve_const_definitions(prog: Program) -> Result<Program1, Error> {
     Ok((prints, env))
 }
 
-fn debug_run(prog: Program, env: HashMap<String, f64>, _counter: i64) {
+fn _debug_run(prog: Program, env: HashMap<String, f64>) {
     println!("DEFINITIONS: -----------");
     for (k, v) in &env {
         println!("{} = {}", k, v)
@@ -694,10 +701,54 @@ fn debug_run(prog: Program, env: HashMap<String, f64>, _counter: i64) {
     }
 }
 
+fn create_sibling_file<P: AsRef<Path>>(original_path: P, sibling_name: &str) -> File {
+    let original_path = original_path.as_ref();
+    if let Some(parent) = original_path.parent() {
+        let sibling_path = parent.join(sibling_name);
+        match fs::File::create(&sibling_path) {
+            Ok(f) => f,
+            Err(e) => panic!("Error creating file {:?}: {}", sibling_path, e),
+        }
+    } else {
+        panic!("Invalid path: No parent directory");
+    }
+}
+
+pub fn get_file_name<P: AsRef<Path>>(path: P) -> String {
+    let path = path.as_ref();
+    path.file_stem()
+        .and_then(|stem| stem.to_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| panic!("Invalid path: No valid file name"))
+}
+
+fn run(prog: Program, env: HashMap<String, f64>, filename: &str) -> Result<(), Error> {
+    Ok(for stmt in prog {
+        match stmt {
+            Stmt::Print(expr, c) => {
+                let result = format!("{}", eval_expr(&expr, &env)?);
+                let mut f =
+                    create_sibling_file(filename, &format!("klarTeXt_{}_{}.tex", get_file_name(filename), c));
+                f.write_all(result.as_bytes())
+                    .expect("Unable to write data");
+            }
+            _ => {}
+        }
+    })
+}
+
+#[derive(clap::Parser)]
+#[command(version, about, long_about = None)] // Read from `Cargo.toml`
+struct CliParser {
+    src: String,
+}
+
 pub fn main() {
-    let name = "../test/test1.tex";
-    let src = include_str!("../test/test1.tex");
-    let p0 = handle_errs(parse_main(src), src, name);
-    let (p1, env) = handle_errs(resolve_const_definitions(p0), src, name);
-    debug_run(p1, env, 0);
+    let cli = <CliParser as clap::Parser>::parse();
+    let filename = cli.src;
+    let src = fs::read_to_string(&filename).expect("Unable to read input file");
+    let p0 = handle_errs(parse_main(&src), &src, &filename);
+    let (p1, env) = handle_errs(resolve_const_definitions(p0), &src, &filename);
+    // debug_run(p1, env);
+    handle_errs(run(p1, env, &filename), &src, &filename);
 }
