@@ -1,16 +1,18 @@
 
 // IGNORE
-WHITESPACE = _{ " " | "\t" | "\n" | "\r" | "\\," |"\\quad" }
+WHITESPACE = _{ " " | "\t" | "\n" | "\r" | "\\," |"\\quad" | "\\\\" }
 COMMENT = _{ "%" ~ (!"\n" ~ ANY)* ~ "\n" }
+IGNORE = _{WHITESPACE | COMMENT}
 
 // FILE PARSING
-main = _{ SOI ~ (program ~ (ANY)*)+ ~EOI }
+outside = _{ (!"\\begin{program}" ~ ANY)+ }
+main = _{ SOI ~ (outside? ~ program ~ outside?)* ~ outside? ~ EOI }
 
 // look for {program} environments
 program = _{
-  (!"\\begin{program}" ~ ANY)* ~ "\\begin{program}" ~ 
-  (math_evn)* ~
-  (!"\\end{program}" ~ ANY)* ~ "\\end{program}"
+  "\\begin{program}" ~ IGNORE* ~
+  ( math_evn ~ IGNORE* )* ~
+  "\\end{program}"
 }
 
 statement = { definition | print_statement | expr_statement }
@@ -20,7 +22,7 @@ definition = { identifier ~ "=" ~ expr }
 
 // in {program}, look for math environments
 math_evn = _{
-	(!"$" ~ ANY)* ~ "$" ~ statement ~ "$"
+  "$" ~ IGNORE* ~ statement ~ IGNORE* ~ "$"
 }
 
 expr = ${ 
@@ -58,7 +60,9 @@ keyword = { "\\left" | "\\right" | "\\cdot" | "\\frac" }
 identifier = @{ (!keyword ~ (simple_identifier | latex_symbol)) ~ subscript? }
 simple_identifier = _{ ASCII_ALPHA }
 latex_symbol = _{ "\\" ~ ASCII_ALPHA+ }
-subscript = _{ "_" ~ "{" ~ ASCII_ALPHA* ~ "}" | "_" ~ ASCII_ALPHANUMERIC }
+// subscript = _{ "_" ~ "{" ~ ASCII_ALPHA* ~ "}" | "_" ~ ASCII_ALPHANUMERIC }
+subscript = { "_" ~ (ASCII_ALPHANUMERIC | "{" ~ nested_block ~ "}") }
+nested_block = { (!("{" | "}") ~ ANY)* ~ ("{" ~ nested_block ~ "}" ~ (!("{" | "}") ~ ANY)*)* }
 
 // OPERATORS
 // infix
