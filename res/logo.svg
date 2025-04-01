@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Created with Inkscape (http://www.inkscape.org/) -->
+
+<svg
+   width="2048"
+   height="2048"
+   viewBox="0 0 541.86665 541.86666"
+   version="1.1"
+   id="svg5"
+   inkscape:version="1.2.2 (b0a8486541, 2022-12-01)"
+   sodipodi:docname="logo.svg"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns:xlink="http://www.w3.org/1999/xlink"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg"
+   xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+   xmlns:cc="http://creativecommons.org/ns#"
+   xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <title
+     id="title13">klarTeXt Logo</title>
+  <sodipodi:namedview
+     id="namedview7"
+     pagecolor="#ffffff"
+     bordercolor="#999999"
+     borderopacity="1"
+     inkscape:showpageshadow="0"
+     inkscape:pageopacity="0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:document-units="px"
+     showgrid="true"
+     inkscape:zoom="0.35355339"
+     inkscape:cx="1018.2338"
+     inkscape:cy="1042.2754"
+     inkscape:window-width="1920"
+     inkscape:window-height="1011"
+     inkscape:window-x="0"
+     inkscape:window-y="32"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="layer1">
+    <inkscape:grid
+       type="xygrid"
+       id="grid285"
+       spacingx="16.933333"
+       spacingy="16.933333"
+       empspacing="2"
+       dotted="false"
+       snapvisiblegridlinesonly="true" />
+  </sodipodi:namedview>
+  <defs
+     id="defs2">
+    <color-profile
+       name="AOC-27-"
+       xlink:href="../../.local/share/icc/edid-d7378ceef0d672f7da85890dd44203b3.icc"
+       id="color-profile440" />
+  </defs>
+  <g
+     inkscape:label="Layer 1"
+     inkscape:groupmode="layer"
+     id="layer1">
+    <path
+       style="fill:#000000;stroke-width:0.238384"
+       d="M 476.1277,33.871841 283.68294,270.93404 476.12629,507.99978 H 393.6505 L 201.20831,270.93357 393.65149,33.866111 Z"
+       id="path347"
+       inkscape:label="&lt;" />
+    <path
+       style="fill:#000000;stroke-width:0.264583"
+       d="m 67.733416,237.0678 h 67.735514 v 67.73412 H 67.730672 Z"
+       id="path351"
+       inkscape:label="dot" />
+    <path
+       style="fill:#000000;stroke-width:0.264583"
+       d="m 135.41426,440.30028 h 67.73553 v 67.73412 h -67.73828 z"
+       id="path351-3"
+       inkscape:label="dot" />
+    <path
+       style="fill:#000000;stroke-width:0.264583"
+       d="m 135.44163,33.867843 h 67.73551 v 67.734127 h -67.73826 z"
+       id="path351-3-6"
+       inkscape:label="dot" />
+  </g>
+  <metadata
+     id="metadata11">
+    <rdf:RDF>
+      <cc:Work
+         rdf:about="">
+        <cc:license
+           rdf:resource="http://creativecommons.org/publicdomain/zero/1.0/" />
+        <dc:title>klarTeXt Logo</dc:title>
+        <dc:creator>
+          <cc:Agent>
+            <dc:title>Julian Karrer</dc:title>
+          </cc:Agent>
+        </dc:creator>
+      </cc:Work>
+      <cc:License
+         rdf:about="http://creativecommons.org/publicdomain/zero/1.0/">
+        <cc:permits
+           rdf:resource="http://creativecommons.org/ns#Reproduction" />
+        <cc:permits
+           rdf:resource="http://creativecommons.org/ns#Distribution" />
+        <cc:permits
+           rdf:resource="http://creativecommons.org/ns#DerivativeWorks" />
+      </cc:License>
+    </rdf:RDF>
+  </metadata>
+</svg>

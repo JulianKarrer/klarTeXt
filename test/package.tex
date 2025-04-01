@@ -1,7 +1,7 @@
 \newcounter{klarCall}
 \newcommand{\callKlarTeXt}{%
   \immediate\write18{%
-    ../target/release/klarTeXt "$(realpath \jobname.tex)" true%
+    klarTeXt "$(realpath \jobname.tex)" true%
   }%
   \checkKlarTeXtError%
 }
