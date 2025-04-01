@@ -1,18 +1,46 @@
 \newcounter{klarCall}
 \newcommand{\callKlarTeXt}{%
   \immediate\write18{%
-    ../target/release/klarTeXt "$(realpath \jobname.tex)"%
+    ../target/release/klarTeXt "$(realpath \jobname.tex)" true%
   }%
+  \checkKlarTeXtError%
 }
 
+\newcommand{\checkKlarTeXtError}{%
+  \IfFileExists{klarTeXt_\jobname_error.txt}{%
+    \begingroup
+      \newread\errfile
+      \openin\errfile=klarTeXt_\jobname_error.txt
+      \def\processline{%
+        \read\errfile to \temp
+        \ifeof\errfile
+          \let\next\relax
+        \else
+          \edef\templine{\expandafter\detokenize\expandafter{\temp}}%
+          \begingroup
+          \catcode`\ =12 % treat spaces as literals
+          \GenericError{}{\templine}{}{}%
+          \endgroup
+          \let\next\processline
+        \fi
+        \next
+      }%
+      \processline
+      \closein\errfile
+    \endgroup
+  }{}%
+}
 \AtBeginDocument{\callKlarTeXt}
 
-\newenvironment{program}[1]
-{%
-    \newcommand{\print}[1]{{%
-      ##1 = %
-      \stepcounter{klarCall}%
-      \input{klarTeXt_\jobname_\theklarCall.tex}%
-    }} 
-}
-{}
+\newenvironment{program}[1]{%
+\newcommand{\print}[1]{{%
+##1 = %
+\stepcounter{klarCall}%
+\edef\tempFile{klarTeXt_\jobname_\theklarCall.tex}%
+  \IfFileExists{\tempFile}{%
+    \input{\tempFile}%
+  }{%
+    unknown%
+  }%
+}} %
+}{}

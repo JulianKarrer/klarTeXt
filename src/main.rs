@@ -131,17 +131,24 @@ fn err_report<S>(
     filename: &str,
     src: &str,
     span: Range<usize>,
+    err_file_name: &Option<String>,
 ) where
     S: ToString,
 {
+    let txt_file_mode = err_file_name.is_some();
+
     let mut colors = ColorGenerator::new();
-    let config = Config::new().with_index_type(ariadne::IndexType::Byte);
-    let mut report = Report::build(ReportKind::Error, (filename, span))
+    let config = Config::new()
+        .with_index_type(ariadne::IndexType::Byte)
+        .with_color(!txt_file_mode)
+        .with_compact(false)
+        .with_cross_gap(!txt_file_mode);
+    let mut report_builder = Report::build(ReportKind::Error, (filename, span))
         .with_message(message)
         .with_config(config);
     let mut order = 0;
     for (lspan, label) in labels {
-        report = report.with_label(
+        report_builder = report_builder.with_label(
             Label::new((filename, lspan))
                 .with_message(label)
                 .with_order(order)
@@ -149,14 +156,28 @@ fn err_report<S>(
         );
         order += 1;
     }
-    report
-        .with_note(note)
-        .finish()
-        .print((filename, Source::from(src)))
-        .unwrap();
+    let report: Report<'_, (&str, Range<usize>)> = report_builder.with_note(note).finish();
+    // write the error report to a text file or to stdout
+    if let Some(err_file) = err_file_name {
+        // first write to a buffer
+        let mut buffer: Vec<u8> = Vec::new();
+        report.write((filename, Source::from(src)), &mut buffer).unwrap();
+        // then replace regular spaces with no-break spaces (U+00A0, ' ')
+        // this preserves arrows and spacing without latex and ide's interference
+        let updated = String::from_utf8(buffer).unwrap().replace(" ", " ");
+        let mut file = create_sibling_file(filename, err_file);
+        file.write_all(updated.as_bytes()).unwrap();
+    } else {
+        report.eprint((filename, Source::from(src))).unwrap();
+    }
 }
 
-fn handle_errs<T>(res: Result<T, Error>, src: &str, filename: &str) -> T {
+fn handle_errs<T>(
+    res: Result<T, Error>,
+    src: &str,
+    filename: &str,
+    err_file_name: &Option<String>,
+) -> T {
     match res {
         Ok(val) => val,
         Err(err) => {
@@ -171,6 +192,7 @@ fn handle_errs<T>(res: Result<T, Error>, src: &str, filename: &str) -> T {
                                 filename,
                                 src,
                                 err.span(),
+                                err_file_name,
                             ),
                 Error::DefMissing(_, name) => err_report(
                                 vec![(
@@ -178,10 +200,11 @@ fn handle_errs<T>(res: Result<T, Error>, src: &str, filename: &str) -> T {
                                     &format!("The identifier {} is undefined.", name),
                                 )],
                                 "Undefined identifier",
-                                "It does not matter in which order you define identifiers using '=', but this one is never defined.\nMaybe you meant to use a predefined identifier like e or π?",
+                                "It does not matter in which order you define identifiers using '='.\nMaybe you meant to use a predefined identifier like e or π?",
                                 filename,
                                 src,
                                 err.span(),
+                                err_file_name,
                             ),
                 Error::DefMultiply(_, name) => err_report(
                                 vec![(
@@ -193,6 +216,7 @@ fn handle_errs<T>(res: Result<T, Error>, src: &str, filename: &str) -> T {
                                 filename,
                                 src,
                                 err.span(),
+                                err_file_name,
                             ),
                 Error::DefCircular(cycle) => {
                                 err_report(
@@ -204,6 +228,7 @@ fn handle_errs<T>(res: Result<T, Error>, src: &str, filename: &str) -> T {
                                 filename,
                                 src,
                                 err.span(),
+                                err_file_name,
                             )},
                 Error::FactorialNeg(_) => err_report(
                                             vec![(
@@ -215,6 +240,7 @@ fn handle_errs<T>(res: Result<T, Error>, src: &str, filename: &str) -> T {
                                             filename,
                                             src,
                                             err.span(),
+                                            err_file_name,
                                         ),
                 Error::FactorialFloat(_) => err_report(
                                             vec![(
@@ -226,6 +252,7 @@ fn handle_errs<T>(res: Result<T, Error>, src: &str, filename: &str) -> T {
                                             filename,
                                             src,
                                             err.span(),
+                                            err_file_name,
                                         ),
                 Error::DivByZero(_) => err_report(
                                             vec![(
@@ -237,6 +264,7 @@ fn handle_errs<T>(res: Result<T, Error>, src: &str, filename: &str) -> T {
                                             filename,
                                             src,
                                             err.span(),
+                                            err_file_name,
                                         ),
                 Error::ImpMulRhsNum(lhs, rhs) => err_report(
                                 vec![(
@@ -251,6 +279,7 @@ fn handle_errs<T>(res: Result<T, Error>, src: &str, filename: &str) -> T {
                                 filename,
                                 src,
                                 err.span(),
+                                err_file_name,
                             ),
                 Error::ImpMulNumNum(lhs, rhs) => err_report(
                                 vec![(
@@ -265,6 +294,7 @@ fn handle_errs<T>(res: Result<T, Error>, src: &str, filename: &str) -> T {
                                 filename,
                                 src,
                                 err.span(),
+                                err_file_name,
                             ),
             }
             exit(1)
@@ -687,18 +717,12 @@ fn resolve_const_definitions(prog: Program) -> Result<Program1, Error> {
     Ok((prints, env))
 }
 
-fn _debug_run(prog: Program, env: HashMap<String, f64>) {
-    println!("DEFINITIONS: -----------");
-    for (k, v) in &env {
-        println!("{} = {}", k, v)
-    }
-    println!("PRINTS: ----------------");
-    for stmt in prog {
-        match stmt {
-            Stmt::Print(expr, c) => println!("{} >>> {:#?}", c, eval_expr(&expr, &env)),
-            _ => {}
-        }
-    }
+fn get_file_name<P: AsRef<Path>>(path: P) -> String {
+    let path = path.as_ref();
+    path.file_stem()
+        .and_then(|stem| stem.to_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| panic!("Invalid path: No valid file name"))
 }
 
 fn create_sibling_file<P: AsRef<Path>>(original_path: P, sibling_name: &str) -> File {
@@ -714,26 +738,70 @@ fn create_sibling_file<P: AsRef<Path>>(original_path: P, sibling_name: &str) -> 
     }
 }
 
-pub fn get_file_name<P: AsRef<Path>>(path: P) -> String {
-    let path = path.as_ref();
-    path.file_stem()
-        .and_then(|stem| stem.to_str())
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| panic!("Invalid path: No valid file name"))
+fn to_sibling_file<P: AsRef<Path>>(original_path: P, sibling_name: &str, content: &str) {
+    let mut f = create_sibling_file(original_path, sibling_name);
+    f.write_all(content.as_bytes())
+        .expect("Unable to write data");
 }
 
-fn run(prog: Program, env: HashMap<String, f64>, filename: &str) -> Result<(), Error> {
+fn delete_matching_files(path: &str, file_name: &str) -> std::io::Result<()> {
+    let dir = Path::new(path)
+        .parent()
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::Other, "Invalid path"))?;
+    
+    if dir.is_dir() {
+        for entry in fs::read_dir(dir)? {
+            let entry = entry?;
+            let file_name_str = entry.file_name();
+            let file_name_os = file_name_str.to_string_lossy();
+            
+            if file_name_os.starts_with(&format!("klarTeXt_{}", file_name)) {
+                fs::remove_file(entry.path())?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn debug_run(prog: Program, env: HashMap<String, f64>) -> Result<(), Error> {
+    println!("DEFINITIONS: -----------");
+    for (k, v) in &env {
+        println!("{} = {}", k, v)
+    }
+    println!("PRINTS: ----------------");
     Ok(for stmt in prog {
         match stmt {
-            Stmt::Print(expr, c) => {
-                let result = format!("{}", eval_expr(&expr, &env)?);
-                let mut f =
-                    create_sibling_file(filename, &format!("klarTeXt_{}_{}.tex", get_file_name(filename), c));
-                f.write_all(result.as_bytes())
-                    .expect("Unable to write data");
-            }
+            Stmt::Print(expr, c) => println!("{} >>> {:#?}", c, eval_expr(&expr, &env)?),
             _ => {}
         }
+    })
+}
+
+fn run(
+    prog: Program,
+    env: HashMap<String, f64>,
+    filename: &str,
+    err_file_name: &str,
+) -> Result<(), Error> {
+    Ok({
+        // clear the program output
+        delete_matching_files(filename, &get_file_name(filename)).unwrap();
+        // execute the program
+        for stmt in prog {
+            match stmt {
+                Stmt::Print(expr, c) => {
+                    to_sibling_file(
+                        filename,
+                        &format!("klarTeXt_{}_{}.tex", get_file_name(filename), c),
+                        &format!("{}", eval_expr(&expr, &env)?),
+                    );
+                }
+                _ => {}
+            }
+        }
+        // no error is indicated by an empty error file
+        // otherwise this will be written in by `handle_errs`
+        to_sibling_file(filename, &err_file_name, &"")
     })
 }
 
@@ -741,14 +809,35 @@ fn run(prog: Program, env: HashMap<String, f64>, filename: &str) -> Result<(), E
 #[command(version, about, long_about = None)] // Read from `Cargo.toml`
 struct CliParser {
     src: String,
+    latex_called: Option<bool>,
 }
 
 pub fn main() {
     let cli = <CliParser as clap::Parser>::parse();
     let filename = cli.src;
+    let err_file_name = if cli.latex_called.unwrap_or(false) {
+        Some(format!("klarTeXt_{}_error.txt", get_file_name(&filename)))
+    } else {
+        None
+    };
+
     let src = fs::read_to_string(&filename).expect("Unable to read input file");
-    let p0 = handle_errs(parse_main(&src), &src, &filename);
-    let (p1, env) = handle_errs(resolve_const_definitions(p0), &src, &filename);
-    // debug_run(p1, env);
-    handle_errs(run(p1, env, &filename), &src, &filename);
+    let p0 = handle_errs(parse_main(&src), &src, &filename, &err_file_name);
+    let (p1, env) = handle_errs(
+        resolve_const_definitions(p0),
+        &src,
+        &filename,
+        &err_file_name,
+    );
+
+    if let Some(err_file_name) = err_file_name {
+        handle_errs(
+            run(p1, env, &filename, &err_file_name),
+            &src,
+            &filename,
+            &Some(err_file_name),
+        );
+    } else {
+        handle_errs(debug_run(p1, env), &src, &filename, &None);
+    }
 }
