@@ -19,11 +19,11 @@ This repository contains the klarTeXt interpreter for LaTeX documents, written i
 - Now you can use the `\begin{program} ... \end{program}` environment and fill it with mathematical statements like `$x = 5$\\ $\print{3x}$`
 
 # Features
-- [x] Common operations like `+`,`-`, multiplication (`\cdot`), division (`\frac{...}{...}`), exponentiation (`^`), etc.
+- [x] Common operations like `+`,`-`, multiplication (`\cdot`), division (`\frac{...}{...}`), exponentiation (`^`), n-th roots etc.
 - [x] Predefined constants like `e`, π (`\pi`), etc.
 - [x] Global, constant defintions like `C = \frac{4}{3}\pi R^3`, `R=2` where the order of the definitions does not matter
   - klarTeXt creates a dependency graph of constant definitions and resolves it topologically, detecting errors like loops or missing definitions.
-- [x] Global Definitions `x = 5`
+- [x] Print statements that integrate into Latex, e.g. rendering `$\print{5x}$` as `5x = 4.57`
 - [x] Useful, precise and [beautiful](https://docs.rs/ariadne/latest/ariadne/)  error messages
   
   as a command-line application:
@@ -64,6 +64,8 @@ And more to come:
     - Exponentiation `10^{-6}`
     - Fractions / Division `\frac{2}{3}`
     - Bracketed subexpressions (`(5+3)`, `\left(6-2\right)`, quiet: `{3+2}`)
+    - N-th roots (`\\sqrt{\pi}`, `\\sqrt[3]{6}`, `\\sqrt[2\pi]{3e}`)
+      - where the degree can be any expression that doesn't evaluate to zero!
     - Identifiers that are user-defined, see below, or predefined constants like e, π, ...
   - Constant **DEFINITIONS** `C = \frac{4}{3}\pi R^3`, `R = 5`
     - the order they are written in does not matter

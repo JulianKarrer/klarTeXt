@@ -47,7 +47,20 @@ fn parse_expr(expression: Pairs<Rule>, span_arg: Option<SpanInfo>) -> Expr {
                     let lhs = parse_expr(p.next().unwrap().into_inner(), None);
                     let rhs = parse_expr(p.next().unwrap().into_inner(), None);
                     Expr::Div(Box::new(lhs), Box::new(rhs), span)
-                }
+                },
+                Rule::sqrt => {
+                    let mut p = primary.clone().into_inner();
+                    let expr = parse_expr(p.next().unwrap().into_inner(), None);
+                    Expr::Sqrt(Box::new(expr), span)
+                },
+                Rule::nthroot => {
+                    let mut p = primary.clone().into_inner();
+                    let degree = parse_expr(p.next().unwrap().into_inner(), None);
+                    let radicant = parse_expr(p.next().unwrap().into_inner(), None);
+                    let deg_span = degree.span();
+                    let rad_span = radicant.span();
+                    Expr::Root(Box::new(degree), Box::new(radicant), deg_span, rad_span)
+                },
                 // recursive case
                 Rule::expr => parse_expr(
                     primary.into_inner(),

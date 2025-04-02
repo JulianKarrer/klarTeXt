@@ -50,13 +50,15 @@ real = @{ (ASCII_NONZERO_DIGIT ~ ASCII_DIGIT+ | ASCII_DIGIT) ~ "." ~ (ASCII_DIGI
 integer = @{ (ASCII_NONZERO_DIGIT ~ ASCII_DIGIT+ | ASCII_DIGIT) }
 
 // BRACKETED, ENCLOSED {}
-enclosed = _{ frac }
-frac = { "\\frac{" ~ expr ~ "}" ~ "{" ~ expr ~ "}"}
+enclosed = _{ frac | sqrt | nthroot }
+frac = { ("\\frac{" | "\\sfrac{") ~ expr ~ "}" ~ "{" ~ expr ~ "}"}
+sqrt = { "\\sqrt{" ~ expr ~ "}" }
+nthroot = { "\\sqrt"~("[" ~ expr ~ "]" )?~"{" ~ expr ~ "}" }
 
 // IDENTIFIERS
 // keywords are names that may not follow after \
 // e.g. \phi is a valid identifier, \left is not
-keyword = { "\\left" | "\\right" | "\\cdot" | "\\frac" }
+keyword = { "\\left" | "\\right" | "\\cdot" | "\\frac" | "\\sfrac" | "\\sqrt" }
 identifier = @{ (!keyword ~ (simple_identifier | latex_symbol)) ~ subscript? }
 simple_identifier = _{ ASCII_ALPHA }
 latex_symbol = _{ "\\" ~ ASCII_ALPHA+ }

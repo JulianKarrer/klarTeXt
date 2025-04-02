@@ -1,4 +1,4 @@
-use error::{handle_errs, Error, SpanInfo};
+use error::{handle_errs, span_merge, Error, SpanInfo};
 use io::{delete_matching_files, get_file_name, to_sibling_file};
 use lazy_static::lazy_static;
 use parse::parse_main;
@@ -28,6 +28,8 @@ enum Expr {
     Num(f64, SpanInfo),
     Ident(String, SpanInfo),
 
+    Sqrt(Box<Expr>, SpanInfo),
+    Root(Box<Expr>, Box<Expr>, SpanInfo, SpanInfo),
     Neg(Box<Expr>, SpanInfo),
     Fac(Box<Expr>, SpanInfo),
 
@@ -73,53 +75,82 @@ fn eval_expr(expr: &Expr, env: &HashMap<String, f64>) -> Result<f64, Error> {
         Expr::Num(x, _) => Ok(*x),
         Expr::Neg(x, _) => Ok(-eval_expr(x, env)?),
         Expr::Fac(x, span) => {
-            let val = eval_expr(x, env)?;
-            let val_int = val.round() as u64;
-            if val < 0. {
-                Err(Error::FactorialNeg(*span))
-            } else if (val - val_int as f64).abs() > std::f64::EPSILON {
-                Err(Error::FactorialFloat(*span))
-            } else {
-                Ok((1..=val_int).map(|x| x as f64).product())
-            }
-        }
+                            let val = eval_expr(x, env)?;
+                            let val_int = val.round() as u64;
+                            if val < 0. {
+                                Err(Error::FactorialNeg(*span))
+                            } else if (val - val_int as f64).abs() > std::f64::EPSILON {
+                                Err(Error::FactorialFloat(*span))
+                            } else {
+                                Ok((1..=val_int).map(|x| x as f64).product())
+                            }
+                }
         Expr::Add(lhs, rhs, _) => Ok(eval_expr(lhs, env)? + eval_expr(rhs, env)?),
         Expr::Sub(lhs, rhs, _) => Ok(eval_expr(lhs, env)? - eval_expr(rhs, env)?),
         Expr::IMul(lhs, rhs, _) => {
-            // check if two numbers are implicitly multiplied
-            match **rhs {
-                Expr::Num(_, _) => match **lhs {
-                    Expr::Num(_, _) => return Err(Error::ImpMulNumNum(lhs.span(), rhs.span())),
-                    _ => return Err(Error::ImpMulRhsNum(lhs.span(), rhs.span())),
-                },
-                _ => {}
-            };
-            // otherwise perform the multiplication
-            Ok(custom_mul(lhs, rhs, env)?)
-        }
+                    // check if two numbers are implicitly multiplied
+                    match **rhs {
+                        Expr::Num(_, _) => match **lhs {
+                            Expr::Num(_, _) => return Err(Error::ImpMulNumNum(lhs.span(), rhs.span())),
+                            _ => return Err(Error::ImpMulRhsNum(lhs.span(), rhs.span())),
+                        },
+                        _ => {}
+                    };
+                    // otherwise perform the multiplication
+                    Ok(custom_mul(lhs, rhs, env)?)
+                }
         Expr::Mul(lhs, rhs, _) => Ok(custom_mul(lhs, rhs, env)?),
         Expr::Div(lhs, rhs, _) => {
-            let res = eval_expr(lhs, env)? / eval_expr(rhs, env)?;
-            if res.is_finite() {
-                Ok(res)
-            } else {
-                Err(Error::DivByZero(span))
-            }
-        }
-        Expr::Pow(lhs, rhs, _) => Ok(eval_expr(lhs, env)?.powf(eval_expr(rhs, env)?)),
-        Expr::Ident(name, _) => {
-            if let Some(cnst) = env.get(name) {
-                // look for user-defined constants
-                Ok(*cnst)
-            } else {
-                if let Some(cnst) = PREDEFINED_CONSTANTS.get(name) {
-                    // look for predefined constants
-                    Ok(*cnst)
+                    let res = eval_expr(lhs, env)? / eval_expr(rhs, env)?;
+                    if res.is_finite() {
+                        Ok(res)
+                    } else {
+                        Err(Error::DivByZero(span))
+                    }
+                }
+        Expr::Pow(lhs, rhs, _) => {
+                let res = eval_expr(lhs, env)?.powf(eval_expr(rhs, env)?);
+                if res.is_finite(){
+                    Ok(res)
                 } else {
-                    Err(Error::DefMissing(span, name.clone()))
+                    Err(Error::ComplexNumber(span_merge(lhs.span(), rhs.span())))
+                }
+            },
+        Expr::Ident(name, _) => {
+                    if let Some(cnst) = env.get(name) {
+                        // look for user-defined constants
+                        Ok(*cnst)
+                    } else {
+                        if let Some(cnst) = PREDEFINED_CONSTANTS.get(name) {
+                            // look for predefined constants
+                            Ok(*cnst)
+                        } else {
+                            Err(Error::DefMissing(span, name.clone()))
+                        }
+                    }
+                }
+        Expr::Sqrt(expr, _) => {
+                let res = eval_expr(expr, env)?.sqrt();
+                if res.is_finite(){
+                    Ok(res)
+                } else {
+                    Err(Error::ComplexNumber(span))
+                }
+            },
+        Expr::Root(degree, radicant, degree_span, radicant_span) => {
+            let degree = eval_expr(degree, env)?;
+            if degree.abs() < f64::EPSILON{
+                // Check for zero-th root
+                Err(Error::ZerothRoot(*degree_span))
+            } else {
+                let res = eval_expr(radicant, env)?.powf(1.0/degree);
+                if res.is_finite(){
+                    Ok(res)
+                } else {
+                    Err(Error::ComplexNumber(*radicant_span))
                 }
             }
-        }
+        },
     }
 }
 

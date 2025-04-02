@@ -4,19 +4,17 @@ use crate::{error::Error, eval_expr, Expr, Program, Program1, Stmt, PREDEFINED_C
 
 fn names_in_expr(expr: &Expr) -> HashSet<String> {
     match expr {
-        // base cases
         Expr::Num(_, _) => HashSet::new(),
         Expr::Ident(name, _) => HashSet::from([name.to_owned()]),
-        // unary recursive cases
-        Expr::Neg(expr, _) | Expr::Fac(expr, _) => names_in_expr(expr),
-        // binary recursive cases
+        Expr::Neg(expr, _) | Expr::Fac(expr, _)| Expr::Sqrt(expr, _) | Expr::Root(_, expr, _, _) => names_in_expr(expr),
         Expr::Add(expr1, expr2, _)
-        | Expr::Sub(expr1, expr2, _)
-        | Expr::Mul(expr1, expr2, _)
-        | Expr::IMul(expr1, expr2, _)
-        | Expr::Div(expr1, expr2, _)
-        | Expr::Pow(expr1, expr2, _) => &names_in_expr(expr1) | &names_in_expr(&expr2),
-    }
+            | Expr::Sub(expr1, expr2, _)
+            | Expr::Mul(expr1, expr2, _)
+            | Expr::IMul(expr1, expr2, _)
+            | Expr::Div(expr1, expr2, _)
+            | Expr::Pow(expr1, expr2, _)
+             => &names_in_expr(expr1) | &names_in_expr(&expr2),
+            }
 }
 
 fn topological_sort(

@@ -52,6 +52,8 @@ pub enum Error {
     FactorialNeg(SpanInfo),
     FactorialFloat(SpanInfo),
     DivByZero(SpanInfo),
+    ZerothRoot(SpanInfo),
+    ComplexNumber(SpanInfo),
 }
 
 impl Error {
@@ -61,14 +63,16 @@ impl Error {
             Error::DefMissing(span_info, _) => span_info.into(),
             Error::DefMultiply(span_info, _) => span_info.into(),
             Error::DefCircular(cycle) => {
-                cycle.iter().map(|(_, span, _)| span.from).min().unwrap()
-                    ..cycle.iter().map(|(_, span, _)| span.to).max().unwrap()
-            }
+                                        cycle.iter().map(|(_, span, _)| span.from).min().unwrap()
+                                            ..cycle.iter().map(|(_, span, _)| span.to).max().unwrap()
+                                    }
             Error::FactorialNeg(span_info) => span_info.into(),
             Error::FactorialFloat(span_info) => span_info.into(),
             Error::DivByZero(span_info) => span_info.into(),
             Error::ImpMulRhsNum(lhs, rhs) => lhs.from..rhs.to,
             Error::ImpMulNumNum(lhs, rhs) => lhs.from..rhs.to,
+            Error::ComplexNumber(span_info) => span_info.into(),
+            Error::ZerothRoot(span_info) => span_info.into(),
         }
     }
 }
@@ -85,6 +89,8 @@ impl Expr {
             Expr::IMul(_, _, span_info) => *span_info,
             Expr::Div(_, _, span_info) => *span_info,
             Expr::Pow(_, _, span_info) => *span_info,
+            Expr::Sqrt(_, span_info) => *span_info,
+            Expr::Root(_, _, _, span_info) => *span_info,
         }
     }
 }
@@ -158,46 +164,54 @@ pub fn handle_errs<T>(
 fn labels(err:&Error)->Vec<(Range<usize>, String)> {
     match err{
         Error::ParseError(_, _) => 
-        vec![(
-            (&err).span(),
-            "the unexpected input is here".to_owned(),
-        )],
+                vec![(
+                    (&err).span(),
+                    "the unexpected input is here".to_owned(),
+                )],
         Error::DefMissing(_, name) => vec![(
-            (&err).span(),
-            format!("The identifier {} is undefined.", name),
-        )],
+                    (&err).span(),
+                    format!("The identifier {} is undefined.", name),
+                )],
         Error::DefMultiply(_, name) => vec![(
-            (&err).span(),
-            format!("The identifier {} was defined at least twice", name),
-        )],
+                    (&err).span(),
+                    format!("The identifier {} was defined at least twice", name),
+                )],
         Error::DefCircular(cycle) => cycle.iter().map(|(name, span, depends_on)|(
-            span.into(), format!("{} depends on {}", name, depends_on)
-        )).collect(),
+                    span.into(), format!("{} depends on {}", name, depends_on)
+                )).collect(),
         Error::ImpMulRhsNum(lhs, rhs) => vec![(
-            lhs.into(),
-            "this expression gets multiplied".to_owned(),
-        ),(
-            rhs.into(),
-            "with a numerical literal on the right-hand side".to_owned(),
-        )],
+                    lhs.into(),
+                    "this expression gets multiplied".to_owned(),
+                ),(
+                    rhs.into(),
+                    "with a numerical literal on the right-hand side".to_owned(),
+                )],
         Error::ImpMulNumNum(lhs, rhs) => vec![(
-            lhs.into(),
-            "this is a number".to_owned(),
-        ),(
-            rhs.into(),
-            "this is also a number".to_owned(),
-        )],
+                    lhs.into(),
+                    "this is a number".to_owned(),
+                ),(
+                    rhs.into(),
+                    "this is also a number".to_owned(),
+                )],
         Error::FactorialNeg(_) => vec![(
-            err.span().start..err.span().end-1,
-            "This expression evaluates to a negative number.".to_owned(),
-        )],
+                    err.span().start..err.span().end-1,
+                    "This expression evaluates to a negative number.".to_owned(),
+                )],
         Error::FactorialFloat(_) => vec![(
-            err.span().start..err.span().end-1,
-            "This expression evaluates to a non-integer.".to_owned(),
-        )],
+                    err.span().start..err.span().end-1,
+                    "This expression evaluates to a non-integer.".to_owned(),
+                )],
         Error::DivByZero(_) => vec![(
+                    err.span(),
+                    "This division results in an undefined value".to_owned(),
+                )],
+        Error::ComplexNumber(_) => vec![(
+                err.span(),
+                "This evaluates to a complex number".to_owned(),
+            )],
+        Error::ZerothRoot(_) => vec![(
             err.span(),
-            "This division results in an undefined value".to_owned(),
+            "This evaluates to zero".to_owned(),
         )],
     }
 }
@@ -213,6 +227,8 @@ fn messages(err:&Error)->&'static str{
         Error::FactorialNeg(_) => "Negative argument to a factorial",
         Error::FactorialFloat(_) => "Non-integer argument to a factorial",
         Error::DivByZero(_) => "Division by Zero",
+        Error::ComplexNumber(_) => "Complex Number encountered",
+        Error::ZerothRoot(_) => "Zero-th Root",
     }
 }
 
@@ -222,13 +238,15 @@ fn notes(err:&Error)->String{
         Error::DefMissing(_, _) => "It does not matter in which order you define identifiers using '='.\nMaybe you meant to use a predefined identifier like e or π?".to_owned(),
         Error::DefMultiply(_, _) => "Definitions using '=' are static, immutable, single assignments of a constant expression to a name.\nYou cannot bind an expression to the same name twice.".to_owned(),
         Error::DefCircular(_) => 
-        "Cyclic Definition detected.\nCompile-time recursion using the static definition '=' is not currently supported.\nDefinitions with '=' bind an expression immutably to a single name forever.\nMaybe you meant to use a mutable assignment?".to_owned(),
+                "Cyclic Definition detected.\nCompile-time recursion using the static definition '=' is not currently supported.\nDefinitions with '=' bind an expression immutably to a single name forever.\nMaybe you meant to use a mutable assignment?".to_owned(),
         Error::ImpMulRhsNum(_, _) => "Implicit multiplication is meant to be used for terms like:\n - 3x + 2y\n - 2(x+3)\nBut here, there is a number on the right-hand side of the multiplication.\nThis is an error, since it is usually unintended.".to_owned(),
         Error::ImpMulNumNum(_, _) => "Implicit multiplication is meant to be used for terms like:\n - 3x + 2y\n - 2(x+3)\nBut here it was used to multiply two numbers.\nThis is an error, since it is usually unintended.".to_owned(),
         Error::FactorialNeg(_) => "The Factorial function '!' is only defined for non-negative integers.".to_owned(),
         Error::FactorialFloat(_) => 
-        "The Factorial function '!' is only defined for non-negative integers.\nPerhaps you want to use a more general Gamma function Γ?".to_owned(),
+                "The Factorial function '!' is only defined for non-negative integers.\nPerhaps you want to use a more general Gamma function Γ?".to_owned(),
         Error::DivByZero(_) => "You can sometimes avoid divisions by zero by rearranging terms.\nMultiplication implements short-circuiting, so 'zero times x' is always zero, even if x is undefined.\nIn that case, evaluation is left-to-right and the order of terms matters!".to_owned(),
+        Error::ComplexNumber(_) => "Complex numbers are currently not supported.\nPlease avoid taking roots of negative arguments.".into(),
+        Error::ZerothRoot(_) => "The zero-th root is undefined.\n`\\sqrt[0]{1}` could be argued to be any number, which is also unheplful\nCongratulations on this rare error message!".into(),
     }
 }
 
@@ -270,6 +288,8 @@ fn rule_description(rule: Rule) -> &'static str {
         Rule::neg => "a negation (prefix -)",
         Rule::postfix => "a postfix operator (like !)",
         Rule::fac => "a factorial (!)",
+        Rule::sqrt => "a square root (\\sqrt{})",
+        Rule::nthroot => "some root (\\sqrt[3]{}, \\sqrt[\\pi]{}, ...)",
     }
 }
 
