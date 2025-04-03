@@ -33,9 +33,9 @@ This repository contains the klarTeXt interpreter for LaTeX documents, written i
   or directly in your favourite LaTeX IDE:
     
   <img src="./res/error_num_right_vscode.png" width=500 />\
+- [x] Predefined functions like `exp`, `log_{...}`, `ln`, `sin`, `cos`, `tan` (and respective inverses like `\arcsin`) `min`, `max`, `\Theta`, ...
 
 And more to come:
-- [ ] Predefined functions like `exp`, `log_{...}`, `ln`, `sin`, `cos`, `tan` (and respective inverses like `sin^{-1}` or `\arcsin`) `min`, `max`, `\Theta`, `\Gamma`
 - [ ] User-defined functions `f(x,y,...) = ...`
 - [ ] Complex numbers and the constant literal `i`
 - [ ] More printing options (exact fractions? big integers? scientific notation?)
@@ -67,6 +67,11 @@ And more to come:
     - N-th roots (`\\sqrt{\pi}`, `\\sqrt[3]{6}`, `\\sqrt[2\pi]{3e}`)
       - where the degree can be any expression that doesn't evaluate to zero!
     - Identifiers that are user-defined, see below, or predefined constants like e, π, ...
+    - Calls to functions like `f()`, `f \left(\frac{1}{2}, 3 \right)` etc., for example to predefined functions:
+      - trigonometric `\sin, \cos, \tan, \arcsin, \arccos, \arctan, \sinh, \cosh, \tanh`
+      - exponential and logarithmic `\exp, \ln, \log, \lg`
+      - minimum and maximum (with any number of arguments!) `\min, \max`
+      - others like the Heaviside theta `\Theta`
   - Constant **DEFINITIONS** `C = \frac{4}{3}\pi R^3`, `R = 5`
     - the order they are written in does not matter
     - these are currently evaluated after parsing to a 64-bit floating point number

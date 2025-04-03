@@ -5,8 +5,7 @@ use pest::{
 };
 
 use crate::{
-    error::{pest_err_adapter, span_merge, Error, SpanInfo},
-    Expr, Program, Stmt,
+    error::{pest_err_adapter, span_merge, Error, SpanInfo}, Expr, Program, Stmt
 };
 
 lazy_static! {
@@ -17,7 +16,7 @@ lazy_static! {
         PrattParser::new()
             .op(Op::infix(add, Left) | Op::infix(sub, Left))
             .op(Op::prefix(neg))
-            .op(Op::infix(mul_implicit, Left))
+            .op(Op::infix(implicit, Left))
             .op(Op::infix(mul, Left) | Op::infix(div, Left))
             .op(Op::infix(pow, Right) | Op::postfix(fac))
     };
@@ -47,12 +46,12 @@ fn parse_expr(expression: Pairs<Rule>, span_arg: Option<SpanInfo>) -> Expr {
                     let lhs = parse_expr(p.next().unwrap().into_inner(), None);
                     let rhs = parse_expr(p.next().unwrap().into_inner(), None);
                     Expr::Div(Box::new(lhs), Box::new(rhs), span)
-                },
+                }
                 Rule::sqrt => {
                     let mut p = primary.clone().into_inner();
                     let expr = parse_expr(p.next().unwrap().into_inner(), None);
                     Expr::Sqrt(Box::new(expr), span)
-                },
+                }
                 Rule::nthroot => {
                     let mut p = primary.clone().into_inner();
                     let degree = parse_expr(p.next().unwrap().into_inner(), None);
@@ -60,7 +59,29 @@ fn parse_expr(expression: Pairs<Rule>, span_arg: Option<SpanInfo>) -> Expr {
                     let deg_span = degree.span();
                     let rad_span = radicant.span();
                     Expr::Root(Box::new(degree), Box::new(radicant), deg_span, rad_span)
-                },
+                }
+                Rule::fn_app => {
+                    let mut p = primary.into_inner();
+                    let fn_name = p.next().unwrap();
+                    let fn_name_str = fn_name.as_str().to_owned();
+                    let fn_name_span = (&fn_name).into();
+                    let mut args = vec![];
+                    for arg in p{
+                        args.push(Box::new(parse_expr(arg.into_inner(), None)));
+                    }
+                    Expr::FnApp(fn_name_str, args, fn_name_span, span)
+                }
+                Rule::bracketed_expr => parse_expr(
+                    primary.into_inner().next().unwrap().into_inner(),
+                    Some(if span_arg.is_none() {
+                        SpanInfo {
+                            from: span.from - 1,
+                            to: span.to,
+                        }
+                    } else {
+                        span
+                    }),
+                ),
                 // recursive case
                 Rule::expr => parse_expr(
                     primary.into_inner(),
@@ -91,7 +112,7 @@ fn parse_expr(expression: Pairs<Rule>, span_arg: Option<SpanInfo>) -> Expr {
                 Rule::mul => Expr::Mul(Box::new(lhs), Box::new(rhs), span),
                 Rule::div => Expr::Div(Box::new(lhs), Box::new(rhs), span),
                 Rule::pow => Expr::Pow(Box::new(lhs), Box::new(rhs), span),
-                Rule::mul_implicit => Expr::IMul(Box::new(lhs), Box::new(rhs), span),
+                Rule::implicit => Expr::IMul(Box::new(lhs), Box::new(rhs), span),
                 _ => unreachable!(),
             }
         })

@@ -1,20 +1,32 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use crate::{error::Error, eval_expr, Expr, Program, Program1, Stmt, PREDEFINED_CONSTANTS};
+use crate::{error::Error, eval_expr, Expr, Program, Program1, Stmt, PREDEFINED};
 
 fn names_in_expr(expr: &Expr) -> HashSet<String> {
     match expr {
         Expr::Num(_, _) => HashSet::new(),
         Expr::Ident(name, _) => HashSet::from([name.to_owned()]),
-        Expr::Neg(expr, _) | Expr::Fac(expr, _)| Expr::Sqrt(expr, _) | Expr::Root(_, expr, _, _) => names_in_expr(expr),
+        Expr::Neg(expr, _)
+        | Expr::Fac(expr, _)
+        | Expr::Sqrt(expr, _)
+        | Expr::Root(_, expr, _, _) => names_in_expr(expr),
         Expr::Add(expr1, expr2, _)
-            | Expr::Sub(expr1, expr2, _)
-            | Expr::Mul(expr1, expr2, _)
-            | Expr::IMul(expr1, expr2, _)
-            | Expr::Div(expr1, expr2, _)
-            | Expr::Pow(expr1, expr2, _)
-             => &names_in_expr(expr1) | &names_in_expr(&expr2),
-            }
+        | Expr::Sub(expr1, expr2, _)
+        | Expr::Mul(expr1, expr2, _)
+        | Expr::IMul(expr1, expr2, _)
+        | Expr::Div(expr1, expr2, _)
+        | Expr::Pow(expr1, expr2, _) => &names_in_expr(expr1) | &names_in_expr(&expr2),
+        Expr::FnApp(name, exprs, _, _) => {
+            // collect names in argument expressions
+            let args_names = exprs
+                .iter()
+                .map(|expr| names_in_expr(&expr))
+                .reduce(|acc: HashSet<String>, e: HashSet<String>| &acc | &e)
+                .unwrap();
+            // combine with names in function expression
+            &HashSet::from([name.to_owned()]) | &args_names
+        }
+    }
 }
 
 fn topological_sort(
@@ -94,7 +106,7 @@ pub fn resolve_const_definitions(prog: Program) -> Result<Program1, Error> {
     let mut env = HashMap::new();
 
     // add predefined definitions to the dependency graph
-    for cnst in (*PREDEFINED_CONSTANTS).keys() {
+    for cnst in (*PREDEFINED).keys() {
         graph.insert(cnst.to_owned(), HashSet::new());
     }
     // find the set of names that each definition depends on
@@ -118,7 +130,7 @@ pub fn resolve_const_definitions(prog: Program) -> Result<Program1, Error> {
     for name in nodes
         .iter()
         // filter out predefined constants
-        .filter(|n| !PREDEFINED_CONSTANTS.contains_key(*n))
+        .filter(|n| !PREDEFINED.contains_key(*n))
     {
         if let Some(expr) = definitions.get(name) {
             // evaluate the expression:

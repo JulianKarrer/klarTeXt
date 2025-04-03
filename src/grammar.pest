@@ -34,15 +34,27 @@ primary   = _{
   // number types
   number_literal | 
   // brackets
-  "(" ~ expr ~ ")" | 
-  "\\left"~"(" ~ expr ~ "\\right"~")" | 
-  "{" ~ expr ~ "}" | 
+  bracketed_expr |
+  // function calls have high priority
+  fn_app | 
   // {} enclosed expressions
   enclosed |
   // Identifiers 
   // (after \frac etc. since \phi is valid)
   identifier 
 } 
+
+bracketed_expr = !{
+  "(" ~ expr ~ ")" | 
+  "\\left"~"(" ~ expr ~ "\\right"~")" | 
+  "{" ~ expr ~ "}" 
+}
+
+fn_app = !{
+  identifier ~ "(" ~ (expr ~ ("," ~ expr)* | expr?) ~")" | 
+  identifier ~ "\\left"~"(" ~ (expr ~ ("," ~ expr)* | expr?) ~ "\\right"~")" | 
+  identifier ~ "{" ~ (expr~ ("," ~ expr)* | expr?) ~ "}" 
+}
 
 // LITERALS
 number_literal = _{ real | integer }
@@ -51,16 +63,16 @@ integer = @{ (ASCII_NONZERO_DIGIT ~ ASCII_DIGIT+ | ASCII_DIGIT) }
 
 // BRACKETED, ENCLOSED {}
 enclosed = _{ frac | sqrt | nthroot }
-frac = { ("\\frac{" | "\\sfrac{") ~ expr ~ "}" ~ "{" ~ expr ~ "}"}
-sqrt = { "\\sqrt{" ~ expr ~ "}" }
-nthroot = { "\\sqrt"~("[" ~ expr ~ "]" )?~"{" ~ expr ~ "}" }
+frac = !{ ("\\frac" | "\\sfrac") ~ "{" ~ expr ~ "}" ~ "{" ~ expr ~ "}"}
+sqrt = !{ "\\sqrt" ~ "{" ~ expr ~ "}" }
+nthroot = !{ "\\sqrt"~("[" ~ expr ~ "]" )?~"{" ~ expr ~ "}" }
 
 // IDENTIFIERS
 // keywords are names that may not follow after \
 // e.g. \phi is a valid identifier, \left is not
 keyword = { "\\left" | "\\right" | "\\cdot" | "\\frac" | "\\sfrac" | "\\sqrt" }
 identifier = @{ (!keyword ~ (simple_identifier | latex_symbol)) ~ subscript? }
-simple_identifier = _{ ASCII_ALPHA }
+simple_identifier = _{ ASCII_ALPHA | ("\\text" ~ "{"~ nested_block ~"}") }
 latex_symbol = _{ "\\" ~ ASCII_ALPHA+ }
 // subscript = _{ "_" ~ "{" ~ ASCII_ALPHA* ~ "}" | "_" ~ ASCII_ALPHANUMERIC }
 subscript = { "_" ~ (ASCII_ALPHANUMERIC | "{" ~ nested_block ~ "}") }
@@ -72,12 +84,12 @@ infix     = _{
 	// optional whitespace around an infix operator is ok
 	WHITESPACE* ~ (add | sub | mul | div | pow ) ~ WHITESPACE*
     // but also try to parse semantic white space for implicit mul
-    | mul_implicit
+    | implicit
 }
 add       = { "+" } // Addition
 sub       = { "-" } // Subtraction
 mul       = { "\\cdot" } // Multiplication
-mul_implicit = { WHITESPACE* }
+implicit = { WHITESPACE* }
 div       = { "/" } // Division
 pow       = { "^" } // Exponentiation
 // prefix

@@ -37,7 +37,7 @@ pub fn to_sibling_file<P: AsRef<Path>>(original_path: P, sibling_name: &str, con
 /// Attempts to delete all files:
 /// - starting with `klarTeXt_{}` where `{}` is the specified `file_name`
 /// - in the same directory as the file specified by `path`
-/// 
+///
 /// This is intended to clean up output files left behind by a previous program invocation as siblings of the source code file. Otherwise, a crash in the current invocation would not prevent the most recent result from being displayed.
 pub fn delete_matching_files(path: &str, file_name: &str) -> std::io::Result<()> {
     let dir = Path::new(path)
