@@ -1,10 +1,13 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use crate::{error::Error, eval_expr, Expr, Program, Program1, Stmt, PREDEFINED};
+use crate::{error::Error, eval_expr, Env, Expr, Program, Stmt, PREDEFINED};
 
-fn names_in_expr(expr: &Expr) -> HashSet<String> {
+pub fn names_in_expr(expr: &Expr) -> HashSet<String> {
     match expr {
-        Expr::Num(_, _) => HashSet::new(),
+        Expr::Val(val, _) => match val {
+            crate::Val::Num(_) => HashSet::new(),
+            crate::Val::Lambda(_, depends_on, _, _, _) => depends_on.clone(),
+        },
         Expr::Ident(name, _) => HashSet::from([name.to_owned()]),
         Expr::Neg(expr, _)
         | Expr::Fac(expr, _)
@@ -99,7 +102,7 @@ fn topological_visit(
     Ok(())
 }
 
-pub fn resolve_const_definitions(prog: Program) -> Result<Program1, Error> {
+pub fn resolve_const_definitions(prog: Program) -> Result<(Program, Env), Error> {
     let mut graph = HashMap::with_capacity(prog.len());
     let mut definitions: HashMap<String, Expr> = HashMap::new();
     let mut prints = vec![];

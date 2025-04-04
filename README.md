@@ -34,9 +34,10 @@ This repository contains the klarTeXt interpreter for LaTeX documents, written i
     
   <img src="./res/error_num_right_vscode.png" width=500 />\
 - [x] Predefined functions like `exp`, `log_{...}`, `ln`, `sin`, `cos`, `tan` (and respective inverses like `\arcsin`) `min`, `max`, `\Theta`, ...
+- [x] User-defined functions like `f(x,y) = 2x+y^2` or `\text{comp}(f,g,x) = f(g(x))`
+  - Functions are first-class you can print and combine them
 
 And more to come:
-- [ ] User-defined functions `f(x,y,...) = ...`
 - [ ] Complex numbers and the constant literal `i`
 - [ ] More printing options (exact fractions? big integers? scientific notation?)
 - [ ] Vectors, matrices, tensors (arrays? tuples?)

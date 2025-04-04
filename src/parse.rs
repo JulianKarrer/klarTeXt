@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use lazy_static::lazy_static;
 use pest::{
     iterators::{Pair, Pairs},
@@ -5,7 +7,7 @@ use pest::{
 };
 
 use crate::{
-    error::{pest_err_adapter, span_merge, Error, SpanInfo}, Expr, Program, Stmt
+    error::{pest_err_adapter, span_merge, Error, SpanInfo}, eval_expr, resolve_def::names_in_expr, Expr, Program, Stmt, Val
 };
 
 lazy_static! {
@@ -36,8 +38,8 @@ fn parse_expr(expression: Pairs<Rule>, span_arg: Option<SpanInfo>) -> Expr {
             };
             match primary.as_rule() {
                 // literals
-                Rule::real => Expr::Num(primary.as_str().parse::<f64>().unwrap(), span),
-                Rule::integer => Expr::Num(primary.as_str().parse::<f64>().unwrap(), span),
+                Rule::real => Expr::Val(Val::Num(primary.as_str().parse::<f64>().unwrap()), span),
+                Rule::integer => Expr::Val(Val::Num(primary.as_str().parse::<f64>().unwrap()), span),
                 // identifiers
                 Rule::identifier => Expr::Ident(primary.as_str().to_owned(), span),
                 // {}-bracketed expressions
@@ -139,6 +141,43 @@ fn parse_stmt(stmt: Pair<'_, Rule>, output_counter: &mut i64) -> Option<Stmt> {
             let name = def.next().unwrap().as_str();
             let expr = parse_expr(def.next().unwrap().into_inner(), None);
             Some(Stmt::Definition(name.to_owned(), expr))
+        }
+        Rule::fn_definition => {
+            let span = (&stmt).into();
+            let mut def = stmt.into_inner();
+            let mut signature = def.next().unwrap().into_inner();
+            let func_name = signature.next().unwrap().as_str().to_owned();
+            let mut params = vec![];
+            for param in signature{
+                params.push(param.as_str().to_owned());
+            }
+            let param_count = params.len();
+            let body = def.next().unwrap().into_inner();
+            let body_str = body.as_str().to_owned();
+            let body_expr = parse_expr(body, None);
+            let names = names_in_expr(&body_expr);
+            Some(Stmt::Definition(func_name.clone(), Expr::Val(Val::Lambda(
+                // the function string contains the body of the definition for error handling, printing etc.
+                body_str.clone(), 
+                names,
+                params.clone(),
+                param_count as isize, 
+                Arc::new({ move |xs: Vec<Val>, env, span| {
+                        if xs.len() != param_count {
+                            // throw an error if the argument count is incorrect
+                            return Err(Error::FnArgCount(func_name.clone(), param_count, xs.len(), span));
+                        } else {
+                            // otherwise add arguments to the environment
+                            let mut env_inner = env.clone(); // TODO: avoid clone
+                            for (key, val) in params.iter().zip(xs) {
+                                env_inner.insert((*key).to_owned(), val);
+                            }
+                            // then evaluate the function body expression in the new, inner scope
+                            eval_expr(&body_expr, &env_inner)
+                        }
+                    }
+                })
+            ), span)))
         }
         _ => unreachable!(),
     }

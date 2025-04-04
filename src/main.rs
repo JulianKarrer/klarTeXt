@@ -7,13 +7,13 @@ use resolve_def::resolve_const_definitions;
 use strum_macros::EnumDiscriminants;
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     f64::{
         self,
         consts::{E, PI},
         INFINITY, NEG_INFINITY,
     },
-    fmt::Debug,
+    fmt::{Debug, Display},
     fs,
     sync::Arc,
 };
@@ -23,7 +23,7 @@ mod parse;
 mod resolve_def;
 
 type Program = Vec<Stmt>;
-type Program1 = (Program, HashMap<String, Val>);
+type Env = HashMap<String, Val>;
 
 #[derive(Debug)]
 enum Stmt {
@@ -33,7 +33,7 @@ enum Stmt {
 
 #[derive(Debug, Clone)]
 enum Expr {
-    Num(f64, SpanInfo),
+    Val(Val, SpanInfo),
     Ident(String, SpanInfo),
 
     FnApp(String, Vec<Box<Expr>>, SpanInfo, SpanInfo),
@@ -55,12 +55,19 @@ enum Expr {
 enum Val {
     /// numeric value represented as `f64`
     Num(f64),
-    /// Lambda containing a name, argument count or arity and the actual function
+    /// Lambda containing:
+    /// - the function name
+    /// - the set of identifiers it depends on
+    /// - parameter names (empty vector if it is a predefined function)
+    /// - argument count or arity 
+    /// - the actual function as a closure
     /// A negative argument count allows any number of arguments
     Lambda(
         String,
+        HashSet<String>,
+        Vec<String>,
         isize,
-        Arc<dyn Fn(Vec<Val>, SpanInfo) -> Result<Val, Error> + Send + Sync>,
+        Arc<dyn Fn(Vec<Val>, &Env, SpanInfo) -> Result<Val, Error> + Send + Sync>,
     ),
 }
 impl ValDiscriminants {
@@ -71,16 +78,25 @@ impl ValDiscriminants {
         }
     }
 }
+impl Display for Val{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self{
+            Val::Num(INFINITY) => write!(f, r"\infty"),
+            Val::Num(NEG_INFINITY) => write!(f, r"\infty"),
+            Val::Num(x) => write!(f, "{}", x),
+            Val::Lambda(name, _, params, _, _) => {
+                if params.is_empty(){
+                    write!(f, "{}", name)
+                } else {
+                    write!(f, "{} \\mapsto {}", params.join(", "), name)
+                }
+            },
+        }
+    }
+}
 impl Debug for Val {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Num(arg0) => f.debug_tuple("Num").field(arg0).finish(),
-            Self::Lambda(name, arg_count, _) => f
-                .debug_tuple("Lambda")
-                .field(name)
-                .field(arg_count)
-                .finish(),
-        }
+        write!(f, "{}", self)
     }
 }
 
@@ -97,8 +113,10 @@ fn predefined_unary_fn(
         name.to_owned(),
         Val::Lambda(
             name.to_owned(),
+            HashSet::new(),
+            vec![],
             1,
-            Arc::new(move |xs: Vec<Val>, span| match xs.as_slice() {
+            Arc::new(move |xs: Vec<Val>, _, span| match xs.as_slice() {
                 [Val::Num(x)] => {
                     let res = func(*x);
                     if let Some(err_descr) = error_description {
@@ -124,7 +142,7 @@ fn predefined_unary_fn(
 }
 
 lazy_static! {
-    static ref PREDEFINED: HashMap<String, Val> = HashMap::from([
+    static ref PREDEFINED: Env = HashMap::from([
         // CONSTANT NUMBERS
         (r"e".to_owned(), Val::Num(E)),
         (r"\pi".to_owned(), Val::Num(PI)),
@@ -154,13 +172,15 @@ lazy_static! {
             r"\min".to_owned(),
             Val::Lambda(
                 r"\min".to_owned(),
+                HashSet::new(),
+                vec![],
                 -1,
-                Arc::new(move |args: Vec<Val>, span|{
+                Arc::new(move |args: Vec<Val>, _, span|{
                     let mut res = f64::INFINITY;
                     for arg in &args{
                         match arg {
                             Val::Num(x) => {res = res.min(*x);},
-                            Val::Lambda(_, _, _) => {
+                            Val::Lambda(_, _, _, _, _) => {
                                 return Err(lambda_arg_err(
                                     "minimum",
                                     span,
@@ -178,13 +198,15 @@ lazy_static! {
             r"\max".to_owned(),
             Val::Lambda(
                 r"\max".to_owned(),
+                HashSet::new(),
+                vec![],
                 -1,
-                Arc::new(move |args: Vec<Val>, span|{
+                Arc::new(move |args: Vec<Val>, _, span|{
                     let mut res = f64::NEG_INFINITY;
                     for arg in &args{
                         match arg {
                             Val::Num(x) => {res = res.max(*x);},
-                            Val::Lambda(_, _, _) => {
+                            Val::Lambda(_, _, _, _, _) => {
                                 return Err(lambda_arg_err(
                                     "maximum",
                                     span,
@@ -202,7 +224,7 @@ lazy_static! {
 }
 
 /// Multiplication that defines zero to be the absorbing element even if the respective other argument is undefined. This allows expressions like `0 + \frac{5}{0}` to evaluate to `0`.
-fn custom_mul(lhs: &Expr, rhs: &Expr, env: &HashMap<String, Val>) -> Result<f64, Error> {
+fn custom_mul(lhs: &Expr, rhs: &Expr, env: &Env) -> Result<f64, Error> {
     let lhs_res = eval_num(lhs, env);
     let rhs_res = eval_num(rhs, env);
     // if any of the two arguments is close enough to zero, return it
@@ -222,18 +244,18 @@ fn custom_mul(lhs: &Expr, rhs: &Expr, env: &HashMap<String, Val>) -> Result<f64,
 }
 
 /// A version of [`eval_expr`] that guarantees the returned value to be a f64 number or an error.
-fn eval_num(expr: &Expr, env: &HashMap<String, Val>) -> Result<f64, Error> {
+fn eval_num(expr: &Expr, env: &Env) -> Result<f64, Error> {
     let span = expr.span();
     let res = eval_expr(expr, env)?;
     match res{
         Val::Num(x) => Ok(x),
-        Val::Lambda(_, _, _) => Err(Error::TypeError(ValDiscriminants::Num.name(), ValDiscriminants::Lambda.name(), span)),
+        Val::Lambda(_, _, _, _, _) => Err(Error::TypeError(ValDiscriminants::Num.name(), ValDiscriminants::Lambda.name(), span)),
     }
 }
 
 /// Look up a value in the current environment, including predefined values like e and π or 
 /// predefined function values like \min, \cos, ...
-fn lookup_env(name:&String, env: &HashMap<String, Val>, span:SpanInfo) -> Result<Val, Error> {
+fn lookup_env(name:&String, env: &Env, span:SpanInfo) -> Result<Val, Error> {
     // look for user-defined constants first
     if let Some(cnst) = env.get(name) {
         Ok(cnst.clone())
@@ -252,7 +274,7 @@ fn lookup_env(name:&String, env: &HashMap<String, Val>, span:SpanInfo) -> Result
 /// This function pretty much defines the semantics of expressions in the language.
 ///
 /// Might result in math errors and missing definition errors.
-fn eval_expr(expr: &Expr, env: &HashMap<String, Val>) -> Result<Val, Error> {
+fn eval_expr(expr: &Expr, env: &Env) -> Result<Val, Error> {
     let span = expr.span();
     match expr {
         Expr::Ident(name, _) => lookup_env(name, env, span),
@@ -268,22 +290,25 @@ fn eval_expr(expr: &Expr, env: &HashMap<String, Val>) -> Result<Val, Error> {
                 // then interpret this as an implicit multiplication
                 Val::Num(x) => {
                     match &args[..]{
-                        [arg] => return eval_expr(&Expr::IMul(Box::new(Expr::Num(x, *name_span)), arg.clone(), span), env),
+                        [arg] => return eval_expr(&Expr::IMul(Box::new(Expr::Val(Val::Num(x), *name_span)), arg.clone(), span), env),
                         _ => {Err(Error::TypeError(ValDiscriminants::Lambda.name(), ValDiscriminants::Num.name(), span))}
                     }
                 },
                 // otherwise, there is a function value to work with
-                Val::Lambda(_, _, func) => {
+                Val::Lambda(_, _, _, _, func) => {
                     // evaluate the arguments
                     let arg_vals = args.iter()
                         .map(|arg|eval_expr(arg, env))
                         .collect::<Result<Vec<Val>, Error>>()?;
                     // call the function
-                    func(arg_vals, span)
+                    func(arg_vals, env, span)
                 },
             }
         }
-        Expr::Num(x, _) => Ok(Val::Num(*x)),
+        Expr::Val(val, _) => match val{
+            Val::Num(x) => Ok(Val::Num(*x)),
+            Val::Lambda(_, _, _, _, _) => Ok(val.clone()),
+        },
         Expr::Neg(x, _) => Ok(Val::Num(-eval_num(x, env)?)),
         Expr::Fac(x, span) => {
             let val = eval_num(x, env)?;
@@ -301,8 +326,8 @@ fn eval_expr(expr: &Expr, env: &HashMap<String, Val>) -> Result<Val, Error> {
         Expr::IMul(lhs, rhs, _) => {
             // check if two numbers are implicitly multiplied
             match **rhs {
-                Expr::Num(_, _) => match **lhs {
-                    Expr::Num(_, _) => return Err(Error::ImpMulNumNum(lhs.span(), rhs.span())),
+                Expr::Val(Val::Num(_), _) => match **lhs {
+                    Expr::Val(Val::Num(_), _) => return Err(Error::ImpMulNumNum(lhs.span(), rhs.span())),
                     _ => return Err(Error::ImpMulRhsNum(lhs.span(), rhs.span())),
                 },
                 _ => {}
@@ -364,12 +389,12 @@ fn eval_expr(expr: &Expr, env: &HashMap<String, Val>) -> Result<Val, Error> {
 
 /// Print debug information to `stdout` while executing the program instead of writing results to output files.
 /// Throws the same errors as the regular [`run`] function.
-fn debug_run(prog: Program, env: HashMap<String, Val>) -> Result<(), Error> {
+fn debug_run(prog: Program, env: Env) -> Result<(), Error> {
     println!("PROGRAM: -----------");
     println!("{:#?}", prog);
     println!("DEFINITIONS: -----------");
     for (k, v) in &env {
-        println!("{} = {:?}", k, v)
+        println!("{} = {}", k, v);
     }
     println!("PRINTS: ----------------");
     Ok(for stmt in prog {
@@ -385,7 +410,7 @@ fn debug_run(prog: Program, env: HashMap<String, Val>) -> Result<(), Error> {
 /// - **Writes** the results of IO statements to output files to be included by a corresponding LaTeX package.
 fn run(
     prog: Program,
-    env: HashMap<String, Val>,
+    env: Env,
     filename: &str,
     err_file_name: &str,
 ) -> Result<(), Error> {
@@ -396,16 +421,11 @@ fn run(
         for stmt in prog {
             match stmt {
                 Stmt::Print(expr, c) => {
-                    let res = eval_num(&expr, &env)?;
+                    let res = eval_expr(&expr, &env)?;
                     to_sibling_file(
                         filename,
                         &format!("klarTeXt_{}_{}.tex", get_file_name(filename), c),
-                        &match res {
-                            // if any result happens to be inifity, print it as a character
-                            INFINITY => format!("\\infty"),
-                            NEG_INFINITY => format!("-\\infty"),
-                            _ => format!("{}", res),
-                        },
+                        &format!("{}", res),
                     );
                 }
                 _ => {}

@@ -15,10 +15,11 @@ program = _{
   "\\end{program}"
 }
 
-statement = { definition | print_statement | expr_statement }
+statement = { fn_definition |definition | print_statement | expr_statement }
 expr_statement = { expr }
 print_statement = {"\\print{" ~ expr ~ "}"}
 definition = { identifier ~ "=" ~ expr }
+fn_definition = { fn_signautre ~ "=" ~ expr }
 
 // in {program}, look for math environments
 math_evn = _{
@@ -50,10 +51,16 @@ bracketed_expr = !{
   "{" ~ expr ~ "}" 
 }
 
+// functions
 fn_app = !{
   identifier ~ "(" ~ (expr ~ ("," ~ expr)* | expr?) ~")" | 
   identifier ~ "\\left"~"(" ~ (expr ~ ("," ~ expr)* | expr?) ~ "\\right"~")" | 
   identifier ~ "{" ~ (expr~ ("," ~ expr)* | expr?) ~ "}" 
+}
+fn_signautre = !{
+  identifier ~ "(" ~ (identifier ~ ("," ~ identifier)* | identifier?) ~")" | 
+  identifier ~ "\\left"~"(" ~ (identifier ~ ("," ~ identifier)* | identifier?) ~ "\\right"~")" | 
+  identifier ~ "{" ~ (identifier~ ("," ~ identifier)* | identifier?) ~ "}" 
 }
 
 // LITERALS

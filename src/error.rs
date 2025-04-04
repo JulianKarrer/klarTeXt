@@ -69,6 +69,8 @@ pub enum Error {
     TypeError(String, String, SpanInfo),
     /// expected, saw, function name, where are the arguments
     FnArgs(String, String, String, SpanInfo),
+    /// Fn name, expected number, saw number, where
+    FnArgCount(String, usize, usize, SpanInfo),
 }
 
 impl Error {
@@ -78,9 +80,9 @@ impl Error {
             Error::DefMissing(span_info, _) => span_info.into(),
             Error::DefMultiply(span_info, _) => span_info.into(),
             Error::DefCircular(cycle) => {
-                cycle.iter().map(|(_, span, _)| span.from).min().unwrap()
-                    ..cycle.iter().map(|(_, span, _)| span.to).max().unwrap()
-            }
+                        cycle.iter().map(|(_, span, _)| span.from).min().unwrap()
+                            ..cycle.iter().map(|(_, span, _)| span.to).max().unwrap()
+                    }
             Error::FactorialNeg(span_info) => span_info.into(),
             Error::FactorialFloat(span_info) => span_info.into(),
             Error::DivByZero(span_info) => span_info.into(),
@@ -91,13 +93,14 @@ impl Error {
             Error::TypeError(_, _, span_info) => span_info.into(),
             Error::FnArgs(_, _, _, span_info) => span_info.into(),
             Error::MathError(_, _, span_info) => span_info.into(),
+            Error::FnArgCount(_, _, _, span_info) => span_info.into(),
         }
     }
 }
 impl Expr {
     pub fn span(&self) -> SpanInfo {
         match self {
-            Expr::Num(_, span_info) => *span_info,
+            Expr::Val(_, span_info) => *span_info,
             Expr::Ident(_, span_info) => *span_info,
             Expr::Neg(_, span_info) => *span_info,
             Expr::Fac(_, span_info) => *span_info,
@@ -191,51 +194,52 @@ fn labels(err: &Error) -> Vec<(Range<usize>, String)> {
     match err {
         Error::ParseError(_, _) => vec![((&err).span(), "the unexpected input is here".to_owned())],
         Error::DefMissing(_, name) => vec![(
-            (&err).span(),
-            format!("The identifier {} is undefined.", name),
-        )],
+                        (&err).span(),
+                        format!("The identifier {} is undefined.", name),
+            )],
         Error::DefMultiply(_, name) => vec![(
-            (&err).span(),
-            format!("The identifier {} was defined at least twice", name),
-        )],
+                (&err).span(),
+                format!("The identifier {} was defined at least twice", name),
+            )],
         Error::DefCircular(cycle) => cycle
-            .iter()
-            .map(|(name, span, depends_on)| {
-                (span.into(), format!("{} depends on {}", name, depends_on))
-            })
-            .collect(),
+                .iter()
+                .map(|(name, span, depends_on)| {
+                    (span.into(), format!("{} depends on {}", name, depends_on))
+                })
+                .collect(),
         Error::ImpMulRhsNum(lhs, rhs) => vec![
-            (lhs.into(), "this expression gets multiplied".to_owned()),
-            (
-                rhs.into(),
-                "with a numerical literal on the right-hand side".to_owned(),
-            ),
-        ],
+                (lhs.into(), "this expression gets multiplied".to_owned()),
+                (
+                    rhs.into(),
+                    "with a numerical literal on the right-hand side".to_owned(),
+                ),
+            ],
         Error::ImpMulNumNum(lhs, rhs) => vec![
-            (lhs.into(), "this is a number".to_owned()),
-            (rhs.into(), "this is also a number".to_owned()),
-        ],
+                (lhs.into(), "this is a number".to_owned()),
+                (rhs.into(), "this is also a number".to_owned()),
+            ],
         Error::FactorialNeg(_) => vec![(
-            err.span().start..err.span().end - 1,
-            "This expression evaluates to a negative number.".to_owned(),
-        )],
+                err.span().start..err.span().end - 1,
+                "This expression evaluates to a negative number.".to_owned(),
+            )],
         Error::FactorialFloat(_) => vec![(
-            err.span().start..err.span().end - 1,
-            "This expression evaluates to a non-integer.".to_owned(),
-        )],
+                err.span().start..err.span().end - 1,
+                "This expression evaluates to a non-integer.".to_owned(),
+            )],
         Error::DivByZero(_) => vec![(
-            err.span(),
-            "This division results in an undefined value".to_owned(),
-        )],
+                err.span(),
+                "This division results in an undefined value".to_owned(),
+            )],
         Error::ComplexNumber(_) => {
-            vec![(err.span(), "This evaluates to a complex number".to_owned())]
-        }
+                vec![(err.span(), "This evaluates to a complex number".to_owned())]
+            }
         Error::ZerothRoot(_) => vec![(err.span(), "This evaluates to zero".to_owned())],
         Error::TypeError(expected, _, _) => {
-            vec![(err.span(), format!("expected {} here", expected))]
-        }
-        Error::FnArgs(_, _, _, _) => vec![(err.span(), "wrong argument type here".to_owned())],
-        Error::MathError(_, _, _) => vec![(err.span(), "the error occured here".to_owned())],
+                vec![(err.span(), format!("expected {} here", expected))]
+            }
+        Error::FnArgs(_, _, _, _) => vec![(err.span(), "Wrong argument type here".to_owned())],
+        Error::MathError(_, _, _) => vec![(err.span(), "Error occured here".to_owned())],
+        Error::FnArgCount(_, _, _, _) => vec![(err.span(), "This function call has a wrong argument count".to_owned())],
     }
 }
 
@@ -246,8 +250,8 @@ fn messages(err: &Error) -> String {
         Error::DefMultiply(_, _) => "Multiply Defined Identifier".to_owned(),
         Error::DefCircular(_) => "Circular Definition".to_owned(),
         Error::ImpMulRhsNum(_, _) => {
-            "Implicit multiplication with number on the right side".to_owned()
-        }
+                        "Implicit multiplication with number on the right side".to_owned()
+            }
         Error::ImpMulNumNum(_, _) => "Implicit multiplication of two numbers".to_owned(),
         Error::FactorialNeg(_) => "Negative argument to a factorial".to_owned(),
         Error::FactorialFloat(_) => "Non-integer argument to a factorial".to_owned(),
@@ -257,6 +261,7 @@ fn messages(err: &Error) -> String {
         Error::TypeError(_, _, _) => "Type Error".to_owned(),
         Error::FnArgs(_, _, _, _) => "Argument Type Error".to_owned(),
         Error::MathError(err_type, _, _) => err_type.to_owned(),
+        Error::FnArgCount(_, _, _, _) => "Wrong Argument Count".to_owned(),
     }
 }
 
@@ -276,6 +281,7 @@ fn notes(err: &Error) -> String {
         Error::TypeError(expected, saw, _) => format!("There was a type error.\nExpected:\n\t{}\nActually supplied:\n\t{}", expected, saw),
         Error::FnArgs(expected, saw, name, _) =>  format!("The arguments to the {} function are wrong in their number or type.\nExpected:\n\t{}\nActually supplied:\n\t{}", name, expected, saw),
         Error::MathError(err_description, fn_name, _) => format!("There was a math error in a {}:\n\t- {}", fn_name, err_description),
+        Error::FnArgCount(name, expected, saw, _) => format!("The function {} was called with {} arguments, but expected {}.", name, saw, expected),
     }
 }
 
@@ -321,6 +327,8 @@ fn rule_description(rule: Rule) -> &'static str {
         Rule::nthroot => r"some root (\sqrt[3]{}, \sqrt[\pi]{}, ...)",
         Rule::bracketed_expr => r"a bracketed expression like (...), \left( ... \right) or {...}",
         Rule::fn_app => r"a function call (or an implicit multiplication like x(5+2), depending on what x is)",
+        Rule::fn_definition => r"a function definition",
+        Rule::fn_signautre => r"a function signature",
     }
 }
 
