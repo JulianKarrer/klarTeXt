@@ -59,14 +59,12 @@ enum Val {
     /// - the function name
     /// - the set of identifiers it depends on
     /// - parameter names (empty vector if it is a predefined function)
-    /// - argument count or arity 
     /// - the actual function as a closure
     /// A negative argument count allows any number of arguments
     Lambda(
         String,
         HashSet<String>,
         Vec<String>,
-        isize,
         Arc<dyn Fn(Vec<Val>, &Env, SpanInfo) -> Result<Val, Error> + Send + Sync>,
     ),
 }
@@ -82,9 +80,9 @@ impl Display for Val{
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self{
             Val::Num(INFINITY) => write!(f, r"\infty"),
-            Val::Num(NEG_INFINITY) => write!(f, r"\infty"),
+            Val::Num(NEG_INFINITY) => write!(f, r"-\infty"),
             Val::Num(x) => write!(f, "{}", x),
-            Val::Lambda(name, _, params, _, _) => {
+            Val::Lambda(name, _, params,  _) => {
                 if params.is_empty(){
                     write!(f, "{}", name)
                 } else {
@@ -115,7 +113,6 @@ fn predefined_unary_fn(
             name.to_owned(),
             HashSet::new(),
             vec![],
-            1,
             Arc::new(move |xs: Vec<Val>, _, span| match xs.as_slice() {
                 [Val::Num(x)] => {
                     let res = func(*x);
@@ -174,13 +171,12 @@ lazy_static! {
                 r"\min".to_owned(),
                 HashSet::new(),
                 vec![],
-                -1,
                 Arc::new(move |args: Vec<Val>, _, span|{
                     let mut res = f64::INFINITY;
                     for arg in &args{
                         match arg {
                             Val::Num(x) => {res = res.min(*x);},
-                            Val::Lambda(_, _, _, _, _) => {
+                            Val::Lambda(_, _, _, _) => {
                                 return Err(lambda_arg_err(
                                     "minimum",
                                     span,
@@ -200,13 +196,12 @@ lazy_static! {
                 r"\max".to_owned(),
                 HashSet::new(),
                 vec![],
-                -1,
                 Arc::new(move |args: Vec<Val>, _, span|{
                     let mut res = f64::NEG_INFINITY;
                     for arg in &args{
                         match arg {
                             Val::Num(x) => {res = res.max(*x);},
-                            Val::Lambda(_, _, _, _, _) => {
+                            Val::Lambda(_, _, _, _) => {
                                 return Err(lambda_arg_err(
                                     "maximum",
                                     span,
@@ -249,7 +244,7 @@ fn eval_num(expr: &Expr, env: &Env) -> Result<f64, Error> {
     let res = eval_expr(expr, env)?;
     match res{
         Val::Num(x) => Ok(x),
-        Val::Lambda(_, _, _, _, _) => Err(Error::TypeError(ValDiscriminants::Num.name(), ValDiscriminants::Lambda.name(), span)),
+        Val::Lambda(_, _, _, _) => Err(Error::TypeError(ValDiscriminants::Num.name(), ValDiscriminants::Lambda.name(), span)),
     }
 }
 
@@ -295,7 +290,7 @@ fn eval_expr(expr: &Expr, env: &Env) -> Result<Val, Error> {
                     }
                 },
                 // otherwise, there is a function value to work with
-                Val::Lambda(_, _, _, _, func) => {
+                Val::Lambda(_, _, _, func) => {
                     // evaluate the arguments
                     let arg_vals = args.iter()
                         .map(|arg|eval_expr(arg, env))
@@ -307,9 +302,11 @@ fn eval_expr(expr: &Expr, env: &Env) -> Result<Val, Error> {
         }
         Expr::Val(val, _) => match val{
             Val::Num(x) => Ok(Val::Num(*x)),
-            Val::Lambda(_, _, _, _, _) => Ok(val.clone()),
+            Val::Lambda(_, _, _, _) => Ok(val.clone()),
         },
-        Expr::Neg(x, _) => Ok(Val::Num(-eval_num(x, env)?)),
+        Expr::Neg(x, _) => {
+            Ok(Val::Num(-eval_num(x, env)?))
+        },
         Expr::Fac(x, span) => {
             let val = eval_num(x, env)?;
             let val_int = val.round() as u64;

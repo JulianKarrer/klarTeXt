@@ -329,6 +329,7 @@ fn rule_description(rule: Rule) -> &'static str {
         Rule::fn_app => r"a function call (or an implicit multiplication like x(5+2), depending on what x is)",
         Rule::fn_definition => r"a function definition",
         Rule::fn_signautre => r"a function signature",
+        Rule::infinity => r"infinity (\infty)",
     }
 }
 
@@ -385,7 +386,7 @@ pub fn lambda_arg_err<S: ToString>(
     expected: Either<Vec<ValDiscriminants>, ValDiscriminants>,
 ) -> Error {
     let expected = match expected {
-        Either::Left(args) => args.iter().map(|arg| arg.name()).join(","),
+        Either::Left(args) => args.iter().map(|arg| arg.name()).join(", "),
         Either::Right(arg) => format!("any number of arguments which each are a {}", arg.name()),
     };
     let saw = xs.iter().map(|arg| arg.discriminant().name()).join(",");

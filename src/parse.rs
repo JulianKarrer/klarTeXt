@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{f64::INFINITY, sync::Arc};
 
 use lazy_static::lazy_static;
 use pest::{
@@ -40,6 +40,7 @@ fn parse_expr(expression: Pairs<Rule>, span_arg: Option<SpanInfo>) -> Expr {
                 // literals
                 Rule::real => Expr::Val(Val::Num(primary.as_str().parse::<f64>().unwrap()), span),
                 Rule::integer => Expr::Val(Val::Num(primary.as_str().parse::<f64>().unwrap()), span),
+                Rule::infinity => Expr::Val(Val::Num(INFINITY), span),
                 // identifiers
                 Rule::identifier => Expr::Ident(primary.as_str().to_owned(), span),
                 // {}-bracketed expressions
@@ -161,7 +162,6 @@ fn parse_stmt(stmt: Pair<'_, Rule>, output_counter: &mut i64) -> Option<Stmt> {
                 body_str.clone(), 
                 names,
                 params.clone(),
-                param_count as isize, 
                 Arc::new({ move |xs: Vec<Val>, env, span| {
                         if xs.len() != param_count {
                             // throw an error if the argument count is incorrect

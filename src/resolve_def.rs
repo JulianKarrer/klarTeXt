@@ -6,7 +6,7 @@ pub fn names_in_expr(expr: &Expr) -> HashSet<String> {
     match expr {
         Expr::Val(val, _) => match val {
             crate::Val::Num(_) => HashSet::new(),
-            crate::Val::Lambda(_, depends_on, _, _, _) => depends_on.clone(),
+            crate::Val::Lambda(_, depends_on, _, _) => depends_on.clone(),
         },
         Expr::Ident(name, _) => HashSet::from([name.to_owned()]),
         Expr::Neg(expr, _)
