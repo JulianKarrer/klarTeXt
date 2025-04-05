@@ -1,5 +1,5 @@
 use std::{
-    fs::{self, File},
+    fs::{self, File, OpenOptions},
     io::Write,
     path::Path,
 };
@@ -14,11 +14,20 @@ pub fn get_file_name<P: AsRef<Path>>(path: P) -> String {
 }
 
 // Returns a `File` to a file with the specified `sibling_name` in the same directory as the file specified by `original_path`, i.e. a sibling file in the directory hierarchy.
-pub fn create_sibling_file<P: AsRef<Path>>(original_path: P, sibling_name: &str) -> File {
+pub fn create_sibling_file<P: AsRef<Path>>(
+    original_path: P,
+    sibling_name: &str,
+    append: bool,
+) -> File {
     let original_path = original_path.as_ref();
     if let Some(parent) = original_path.parent() {
         let sibling_path = parent.join(sibling_name);
-        match fs::File::create(&sibling_path) {
+        match OpenOptions::new()
+            .create(true)
+            .append(append)
+            .write(!append)
+            .open(&sibling_path)
+        {
             Ok(f) => f,
             Err(e) => panic!("Error creating file {:?}: {}", sibling_path, e),
         }
@@ -28,8 +37,8 @@ pub fn create_sibling_file<P: AsRef<Path>>(original_path: P, sibling_name: &str)
 }
 
 /// Writes the `content` to a file with the specified `sibling_name` in the same directory as the file specified by `original_path`, i.e. a sibling file in the directory hierarchy.
-pub fn to_sibling_file<P: AsRef<Path>>(original_path: P, sibling_name: &str, content: &str) {
-    let mut f = create_sibling_file(original_path, sibling_name);
+pub fn write_to_sibling_file<P: AsRef<Path>>(original_path: P, sibling_name: &str, content: &str) {
+    let mut f = create_sibling_file(original_path, sibling_name, false);
     f.write_all(content.as_bytes())
         .expect("Unable to write data");
 }

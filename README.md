@@ -24,7 +24,7 @@ This repository contains the klarTeXt interpreter for LaTeX documents, written i
 - [x] Global, constant defintions like `C = \frac{4}{3}\pi R^3`, `R=2` where the order of the definitions does not matter
   - klarTeXt creates a dependency graph of constant definitions and resolves it topologically, detecting errors like loops or missing definitions.
 - [x] Print statements that integrate into Latex, e.g. rendering `$\print{5x}$` as `5x = 4.57`
-- [x] Useful, precise and [beautiful](https://docs.rs/ariadne/latest/ariadne/)  error messages
+- [x] Useful, precise and [beautiful](https://docs.rs/ariadne/latest/ariadne/)  error messages and warnings
   
   as a command-line application:
   

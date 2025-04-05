@@ -1,28 +1,31 @@
-use std::{f64::INFINITY, sync::Arc};
+use std::{
+    f64::INFINITY,
+    sync::{Arc, LazyLock},
+};
 
-use lazy_static::lazy_static;
 use pest::{
     iterators::{Pair, Pairs},
     pratt_parser::{Assoc, Op, PrattParser},
 };
 
 use crate::{
-    error::{pest_err_adapter, span_merge, Error, SpanInfo}, eval_expr, resolve_def::names_in_expr, Expr, Program, Stmt, Val
+    error::{pest_err_adapter, span_merge, Error, SpanInfo},
+    eval_expr,
+    resolve_def::names_in_expr,
+    Expr, Program, Stmt, Val,
 };
 
-lazy_static! {
-    static ref PRATT_PARSER: PrattParser<Rule> = {
-        use Assoc::*;
-        use Rule::*;
+static PRATT_PARSER: LazyLock<PrattParser<Rule>> = LazyLock::new(|| {
+    use Assoc::*;
+    use Rule::*;
 
-        PrattParser::new()
-            .op(Op::infix(add, Left) | Op::infix(sub, Left))
-            .op(Op::prefix(neg))
-            .op(Op::infix(implicit, Left))
-            .op(Op::infix(mul, Left) | Op::infix(div, Left))
-            .op(Op::infix(pow, Right) | Op::postfix(fac))
-    };
-}
+    PrattParser::new()
+        .op(Op::infix(add, Left) | Op::infix(sub, Left))
+        .op(Op::prefix(neg))
+        .op(Op::infix(implicit, Left))
+        .op(Op::infix(mul, Left) | Op::infix(div, Left))
+        .op(Op::infix(pow, Right) | Op::postfix(fac))
+});
 
 #[derive(pest_derive::Parser)]
 #[grammar = "grammar.pest"] // relative to src
@@ -39,7 +42,9 @@ fn parse_expr(expression: Pairs<Rule>, span_arg: Option<SpanInfo>) -> Expr {
             match primary.as_rule() {
                 // literals
                 Rule::real => Expr::Val(Val::Num(primary.as_str().parse::<f64>().unwrap()), span),
-                Rule::integer => Expr::Val(Val::Num(primary.as_str().parse::<f64>().unwrap()), span),
+                Rule::integer => {
+                    Expr::Val(Val::Num(primary.as_str().parse::<f64>().unwrap()), span)
+                }
                 Rule::infinity => Expr::Val(Val::Num(INFINITY), span),
                 // identifiers
                 Rule::identifier => Expr::Ident(primary.as_str().to_owned(), span),
@@ -69,7 +74,7 @@ fn parse_expr(expression: Pairs<Rule>, span_arg: Option<SpanInfo>) -> Expr {
                     let fn_name_str = fn_name.as_str().to_owned();
                     let fn_name_span = (&fn_name).into();
                     let mut args = vec![];
-                    for arg in p{
+                    for arg in p {
                         args.push(Box::new(parse_expr(arg.into_inner(), None)));
                     }
                     Expr::FnApp(fn_name_str, args, fn_name_span, span)
@@ -138,10 +143,11 @@ fn parse_stmt(stmt: Pair<'_, Rule>, output_counter: &mut i64) -> Option<Stmt> {
             Some(Stmt::Print(expr, *output_counter))
         }
         Rule::definition => {
+            let span = (&stmt).into();
             let mut def = stmt.into_inner();
             let name = def.next().unwrap().as_str();
             let expr = parse_expr(def.next().unwrap().into_inner(), None);
-            Some(Stmt::Definition(name.to_owned(), expr))
+            Some(Stmt::Definition(name.to_owned(), expr, span))
         }
         Rule::fn_definition => {
             let span = (&stmt).into();
@@ -149,7 +155,7 @@ fn parse_stmt(stmt: Pair<'_, Rule>, output_counter: &mut i64) -> Option<Stmt> {
             let mut signature = def.next().unwrap().into_inner();
             let func_name = signature.next().unwrap().as_str().to_owned();
             let mut params = vec![];
-            for param in signature{
+            for param in signature {
                 params.push(param.as_str().to_owned());
             }
             let param_count = params.len();
@@ -157,27 +163,40 @@ fn parse_stmt(stmt: Pair<'_, Rule>, output_counter: &mut i64) -> Option<Stmt> {
             let body_str = body.as_str().to_owned();
             let body_expr = parse_expr(body, None);
             let names = names_in_expr(&body_expr);
-            Some(Stmt::Definition(func_name.clone(), Expr::Val(Val::Lambda(
-                // the function string contains the body of the definition for error handling, printing etc.
-                body_str.clone(), 
-                names,
-                params.clone(),
-                Arc::new({ move |xs: Vec<Val>, env, span| {
-                        if xs.len() != param_count {
-                            // throw an error if the argument count is incorrect
-                            return Err(Error::FnArgCount(func_name.clone(), param_count, xs.len(), span));
-                        } else {
-                            // otherwise add arguments to the environment
-                            let mut env_inner = env.clone(); // TODO: avoid clone
-                            for (key, val) in params.iter().zip(xs) {
-                                env_inner.insert((*key).to_owned(), val);
+            Some(Stmt::Definition(
+                func_name.clone(),
+                Expr::Val(
+                    Val::Lambda(
+                        // the function string contains the body of the definition for error handling, printing etc.
+                        body_str.clone(),
+                        names,
+                        params.clone(),
+                        Arc::new({
+                            move |xs: Vec<Val>, env, span| {
+                                if xs.len() != param_count {
+                                    // throw an error if the argument count is incorrect
+                                    return Err(Error::FnArgCount(
+                                        func_name.clone(),
+                                        param_count,
+                                        xs.len(),
+                                        span,
+                                    ));
+                                } else {
+                                    // otherwise add arguments to the environment
+                                    let mut env_inner = env.clone(); // TODO: avoid clone
+                                    for (key, val) in params.iter().zip(xs) {
+                                        env_inner.insert((*key).to_owned(), val);
+                                    }
+                                    // then evaluate the function body expression in the new, inner scope
+                                    eval_expr(&body_expr, &env_inner)
+                                }
                             }
-                            // then evaluate the function body expression in the new, inner scope
-                            eval_expr(&body_expr, &env_inner)
-                        }
-                    }
-                })
-            ), span)))
+                        }),
+                    ),
+                    span,
+                ),
+                span,
+            ))
         }
         _ => unreachable!(),
     }

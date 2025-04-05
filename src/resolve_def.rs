@@ -1,6 +1,9 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use crate::{error::Error, eval_expr, Env, Expr, Program, Stmt, PREDEFINED};
+use crate::{
+    error::{Error, Warning, WARNINGS},
+    eval_expr, Env, Expr, Program, Stmt, PREDEFINED,
+};
 
 pub fn names_in_expr(expr: &Expr) -> HashSet<String> {
     match expr {
@@ -115,8 +118,13 @@ pub fn resolve_const_definitions(prog: Program) -> Result<(Program, Env), Error>
     // find the set of names that each definition depends on
     for stmt in prog {
         match stmt {
-            Stmt::Definition(name, expr) => {
-                graph.insert(name.to_owned(), names_in_expr(&expr));
+            Stmt::Definition(name, expr, span) => {
+                if let Some(_) = graph.insert(name.to_owned(), names_in_expr(&expr)) {
+                    WARNINGS
+                        .lock()
+                        .unwrap()
+                        .push(Warning::PredefinedOverwritten(name.to_owned(), span));
+                };
                 let span = expr.span();
                 if let Some(_) = definitions.insert(name.to_owned(), expr) {
                     return Err(Error::DefMultiply(span, name.to_owned()));

@@ -8,10 +8,6 @@ about = "Interpreter for the klarTeXt language embedded in LaTeX."
 [dependencies]
 pest = "2.7.15"
 pest_derive = "2.7.15"
-lazy_static = "1.5.0"
 ariadne = "0.5.1"
 itertools = "0.14.0"
 clap = { version = "4.5.34", features = ["derive"] }
-strum = "0.27.1"
-strum_macros = "0.27.1"
-either = "1.15.0"

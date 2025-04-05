@@ -4,6 +4,7 @@
     klarTeXt "$(realpath \jobname.tex)" true%
   }%
   \checkKlarTeXtError%
+  \checkKlarTeXtWarnings%
 }
 
 \newcommand{\checkKlarTeXtError}{%
@@ -30,6 +31,34 @@
     \endgroup
   }{}%
 }
+
+
+\newcommand{\checkKlarTeXtWarnings}{%
+  \IfFileExists{klarTeXt_\jobname_warning.txt}{%
+    \begingroup
+      \newread\errfile
+      \openin\errfile=klarTeXt_\jobname_warning.txt
+      \def\processline{%
+        \read\errfile to \temp
+        \ifeof\errfile
+          \let\next\relax
+        \else
+          \edef\templine{\expandafter\detokenize\expandafter{\temp}}%
+          \begingroup
+          \catcode`\ =12 % treat spaces as literals
+          \PackageWarning{klarTeXt}{\templine}{}{}%
+          \endgroup
+          \let\next\processline
+        \fi
+        \next
+      }%
+      \processline
+      \closein\errfile
+    \endgroup
+  }{}%
+}
+
+
 \AtBeginDocument{\callKlarTeXt}
 
 \newenvironment{program}[1]{%
