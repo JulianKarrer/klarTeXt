@@ -64,8 +64,9 @@
   }
 
   // LITERALS
-  number_literal = _{ real | integer | infinity }
+  number_literal = _{ real | integer | digit | infinity }
   real = @{ (ASCII_NONZERO_DIGIT ~ ASCII_DIGIT+ | ASCII_DIGIT) ~ "." ~ (ASCII_DIGIT)* }
+  digit = @{ ASCII_DIGIT } 
   integer = @{ (ASCII_NONZERO_DIGIT ~ ASCII_DIGIT+ | ASCII_DIGIT) }
   infinity = @{ "\\infty" }
 
@@ -78,7 +79,7 @@
   // IDENTIFIERS
   // keywords are names that may not follow after \
   // e.g. \phi is a valid identifier, \left is not
-  keyword = { "\\left" | "\\right" | "\\cdot" | "\\frac" | "\\sfrac" | "\\sqrt"| "\\infty" }
+  keyword = { "\\left" | "\\right" | "\\cdot" | "\\frac" | "\\sfrac" | "\\sqrt"| "\\infty" | "\\sum" | "\\prod" }
   identifier = @{ (!keyword ~ (simple_identifier | latex_symbol)) ~ subscript? }
   simple_identifier = _{ ASCII_ALPHA | ("\\text" ~ "{"~ nested_block ~"}") }
   latex_symbol = _{ "\\" ~ ASCII_ALPHA+ }
@@ -101,8 +102,17 @@
   div       = { "/" } // Division
   pow       = { "^" } // Exponentiation
   // prefix
-  prefix    = _{ neg }
+  prefix    = _{ neg | sum | prod }
   neg       = { "-" } // Negation
+  sum       = { "\\sum" ~ reduction } // Summation
+  // prod       = { "\\prod_" ~ reduction } // Product
+  prod       = { "\\prod" ~ reduction } // Product
+  reduction = _{ "_" ~ "{" ~ identifier ~ "=" ~ expr ~ "}" ~ "^" ~ (wrapped_digit | "{" ~ expr ~ "}" ) }
   // postfix
   postfix   = _{ fac }
   fac       = { "!" } // Factorial
+
+  // UTILITIES
+  // wrap a digit so it has an into_inner() like expressions do
+  // in case either an integer OR an expression must be parsed, like in sums
+  wrapped_digit = { digit }

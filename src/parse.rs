@@ -21,7 +21,7 @@ static PRATT_PARSER: LazyLock<PrattParser<Rule>> = LazyLock::new(|| {
 
     PrattParser::new()
         .op(Op::infix(add, Left) | Op::infix(sub, Left))
-        .op(Op::prefix(neg))
+        .op(Op::prefix(neg) | Op::prefix(sum) | Op::prefix(prod))
         .op(Op::infix(implicit, Left))
         .op(Op::infix(mul, Left) | Op::infix(div, Left))
         .op(Op::infix(pow, Right) | Op::postfix(fac))
@@ -31,7 +31,7 @@ static PRATT_PARSER: LazyLock<PrattParser<Rule>> = LazyLock::new(|| {
 #[grammar = "grammar.pest"] // relative to src
 struct TexParser;
 
-fn parse_expr(expression: Pairs<Rule>, span_arg: Option<SpanInfo>) -> Expr {
+fn parse_expr(expression: Pairs<Rule>, span_arg: Option<SpanInfo>, src: &str) -> Result<Expr,Error> {
     PRATT_PARSER
         .map_primary(|primary: Pair<'_, Rule>| {
             let span = if let Some(s) = span_arg {
@@ -41,32 +41,35 @@ fn parse_expr(expression: Pairs<Rule>, span_arg: Option<SpanInfo>) -> Expr {
             };
             match primary.as_rule() {
                 // literals
-                Rule::real => Expr::Val(Val::Num(primary.as_str().parse::<f64>().unwrap()), span),
+                Rule::real => Ok(Expr::Val(Val::Num(primary.as_str().parse::<f64>().unwrap()), span)),
                 Rule::integer => {
-                    Expr::Val(Val::Num(primary.as_str().parse::<f64>().unwrap()), span)
+                    Ok(Expr::Val(Val::Num(primary.as_str().parse::<f64>().unwrap()), span))
+                },
+                Rule::digit => {
+                    Ok(Expr::Val(Val::Num(primary.as_str().parse::<f64>().unwrap()), span))
                 }
-                Rule::infinity => Expr::Val(Val::Num(INFINITY), span),
+                Rule::infinity => Ok(Expr::Val(Val::Num(INFINITY), span)),
                 // identifiers
-                Rule::identifier => Expr::Ident(primary.as_str().to_owned(), span),
+                Rule::identifier => Ok(Expr::Ident(primary.as_str().to_owned(), span)),
                 // {}-bracketed expressions
                 Rule::frac => {
                     let mut p = primary.clone().into_inner();
-                    let lhs = parse_expr(p.next().unwrap().into_inner(), None);
-                    let rhs = parse_expr(p.next().unwrap().into_inner(), None);
-                    Expr::Div(Box::new(lhs), Box::new(rhs), span)
+                    let lhs = parse_expr(p.next().unwrap().into_inner(), None, src)?;
+                    let rhs = parse_expr(p.next().unwrap().into_inner(), None, src)?;
+                    Ok(Expr::Div(Box::new(lhs), Box::new(rhs), span))
                 }
                 Rule::sqrt => {
                     let mut p = primary.clone().into_inner();
-                    let expr = parse_expr(p.next().unwrap().into_inner(), None);
-                    Expr::Sqrt(Box::new(expr), span)
+                    let expr = parse_expr(p.next().unwrap().into_inner(), None, src)?;
+                    Ok(Expr::Sqrt(Box::new(expr), span))
                 }
                 Rule::nthroot => {
                     let mut p = primary.clone().into_inner();
-                    let degree = parse_expr(p.next().unwrap().into_inner(), None);
-                    let radicant = parse_expr(p.next().unwrap().into_inner(), None);
+                    let degree = parse_expr(p.next().unwrap().into_inner(), None, src)?;
+                    let radicant = parse_expr(p.next().unwrap().into_inner(), None, src)?;
                     let deg_span = degree.span();
                     let rad_span = radicant.span();
-                    Expr::Root(Box::new(degree), Box::new(radicant), deg_span, rad_span)
+                    Ok(Expr::Root(Box::new(degree), Box::new(radicant), deg_span, rad_span))
                 }
                 Rule::fn_app => {
                     let mut p = primary.into_inner();
@@ -75,9 +78,9 @@ fn parse_expr(expression: Pairs<Rule>, span_arg: Option<SpanInfo>) -> Expr {
                     let fn_name_span = (&fn_name).into();
                     let mut args = vec![];
                     for arg in p {
-                        args.push(Box::new(parse_expr(arg.into_inner(), None)));
+                        args.push(Box::new(parse_expr(arg.into_inner(), None, src)?));
                     }
-                    Expr::FnApp(fn_name_str, args, fn_name_span, span)
+                    Ok(Expr::FnApp(fn_name_str, args, fn_name_span, span))
                 }
                 Rule::bracketed_expr => parse_expr(
                     primary.into_inner().next().unwrap().into_inner(),
@@ -89,6 +92,7 @@ fn parse_expr(expression: Pairs<Rule>, span_arg: Option<SpanInfo>) -> Expr {
                     } else {
                         span
                     }),
+                    src
                 ),
                 // recursive case
                 Rule::expr => parse_expr(
@@ -101,53 +105,135 @@ fn parse_expr(expression: Pairs<Rule>, span_arg: Option<SpanInfo>) -> Expr {
                     } else {
                         span
                     }),
+                    src
                 ),
-                _ => unreachable!(),
+                _ => {println!("{:?}", primary);unreachable!()},
             }
         })
         .map_prefix(|prefix, rhs| {
             let span = (&prefix).into();
+            let rhs = rhs?;
             match prefix.as_rule() {
-                Rule::neg => Expr::Neg(Box::new(rhs), span),
+                Rule::neg => Ok(Expr::Neg(Box::new(rhs), span)),
+                Rule::sum => {
+                    let (low,high,body_lam) = parse_reduction(prefix, rhs, src)?;
+                    Ok(Expr::Sum(low..=high, body_lam, span))
+                },
+                Rule::prod => {
+                    let (low,high,body_lam) = parse_reduction(prefix, rhs, src)?;
+                    Ok(Expr::Prod(low..=high, body_lam, span))
+                },
                 _ => unreachable!(),
             }
         })
         .map_infix(|lhs, op, rhs| {
+            let lhs = lhs?;
+            let rhs = rhs?;
             let span = span_merge(&lhs, &rhs);
             match op.as_rule() {
-                Rule::add => Expr::Add(Box::new(lhs), Box::new(rhs), span),
-                Rule::sub => Expr::Sub(Box::new(lhs), Box::new(rhs), span),
-                Rule::mul => Expr::Mul(Box::new(lhs), Box::new(rhs), span),
-                Rule::div => Expr::Div(Box::new(lhs), Box::new(rhs), span),
-                Rule::pow => Expr::Pow(Box::new(lhs), Box::new(rhs), span),
-                Rule::implicit => Expr::IMul(Box::new(lhs), Box::new(rhs), span),
+                Rule::add => Ok(Expr::Add(Box::new(lhs), Box::new(rhs), span)),
+                Rule::sub => Ok(Expr::Sub(Box::new(lhs), Box::new(rhs), span)),
+                Rule::mul => Ok(Expr::Mul(Box::new(lhs), Box::new(rhs), span)),
+                Rule::div => Ok(Expr::Div(Box::new(lhs), Box::new(rhs), span)),
+                Rule::pow => Ok(Expr::Pow(Box::new(lhs), Box::new(rhs), span)),
+                Rule::implicit => Ok(Expr::IMul(Box::new(lhs), Box::new(rhs), span)),
                 _ => unreachable!(),
             }
         })
         .map_postfix(|lhs, postfix| {
+            let lhs = lhs?;
             let span = span_merge(&lhs, &postfix);
             match postfix.as_rule() {
-                Rule::fac => Expr::Fac(Box::new(lhs), span),
+                Rule::fac => Ok(Expr::Fac(Box::new(lhs), span)),
                 _ => unreachable!(),
             }
         })
         .parse(expression)
 }
 
-fn parse_stmt(stmt: Pair<'_, Rule>, output_counter: &mut i64) -> Option<Stmt> {
+fn reduction_expect_int(expr:&Expr)->Result<i64, Error>{
+    if let Expr::Val(Val::Num(x), _) = expr{
+        if (x - x.round()) < f64::EPSILON{
+            Ok(x.round() as i64)
+        } else {
+            Err(Error::SumNonIntegerVar(expr.span()))
+        }
+    } else {
+        Err(Error::SumBodyNotNumeric(expr.span()))
+    }
+}
+
+fn parse_reduction(pair:Pair<'_, Rule>, rhs:Expr, src: &str)->Result<(i64, i64, Val), Error>{
+    let mut sum = pair.into_inner();
+    let sum_var = sum.next().unwrap().as_str().to_owned();
+    let low_expr = parse_expr(sum.next().unwrap().into_inner(), None, src)?;
+    let high_expr = parse_expr(sum.next().unwrap().into_inner(), None, src)?;
+
+    let low = reduction_expect_int(&low_expr)?;
+    let high = reduction_expect_int(&high_expr)?;
+
+    let body_str = rhs.span().read_source(src);
+    let body = create_function(
+        sum.as_str().to_owned(), 
+        vec![sum_var], 
+        rhs, 
+        body_str
+    );
+
+   Ok((low, high, body))
+}
+
+fn create_function(
+    name:String, 
+    params:Vec<String>, 
+    body_expr:Expr, 
+    body_str:String,
+)->Val{
+    let names = names_in_expr(&body_expr);
+    let param_count = params.len();
+    Val::Lambda(
+        // the function string contains the body of the definition for error handling, printing etc.
+        body_str.clone(),
+        names,
+        params.clone(),
+        Arc::new({
+            move |xs: Vec<Val>, env, span| {
+                if xs.len() != param_count {
+                    // throw an error if the argument count is incorrect
+                    return Err(Error::FnArgCount(
+                        name.clone(),
+                        param_count,
+                        xs.len(),
+                        span,
+                    ));
+                } else {
+                    // otherwise add arguments to the environment
+                    let mut env_inner = env.clone(); // TODO: avoid clone
+                    for (key, val) in params.iter().zip(xs) {
+                        env_inner.insert((*key).to_owned(), val);
+                    }
+                    // then evaluate the function body expression in the new, inner scope
+                    eval_expr(&body_expr, &env_inner)
+                }
+            }
+        }),
+    )
+}
+
+fn parse_stmt(stmt: Pair<'_, Rule>, output_counter: &mut i64, src: &str) -> Result<Option<Stmt>, Error> {
     match stmt.as_rule() {
-        Rule::expr_statement => None,
+        Rule::expr_statement => Ok(None),
         Rule::print_statement => {
-            let expr = parse_expr(stmt.into_inner().next().unwrap().into_inner(), None);
+            let expr = parse_expr(stmt.into_inner().next().unwrap().into_inner(), None, src)?;
             *output_counter += 1;
-            Some(Stmt::Print(expr, *output_counter))
+            Ok(Some(Stmt::Print(expr, *output_counter)))
         }
         Rule::definition => {
             let span = (&stmt).into();
             let mut def = stmt.into_inner();
             let name = def.next().unwrap().as_str();
-            let expr = parse_expr(def.next().unwrap().into_inner(), None);
-            Some(Stmt::Definition(name.to_owned(), expr, span))
+            let expr = parse_expr(def.next().unwrap().into_inner(), None, src)?;
+            Ok(Some(Stmt::Definition(name.to_owned(), expr, span)))
         }
         Rule::fn_definition => {
             let span = (&stmt).into();
@@ -158,67 +244,44 @@ fn parse_stmt(stmt: Pair<'_, Rule>, output_counter: &mut i64) -> Option<Stmt> {
             for param in signature {
                 params.push(param.as_str().to_owned());
             }
-            let param_count = params.len();
             let body = def.next().unwrap().into_inner();
             let body_str = body.as_str().to_owned();
-            let body_expr = parse_expr(body, None);
-            let names = names_in_expr(&body_expr);
-            Some(Stmt::Definition(
+            let body_expr = parse_expr(body, None, src)?;
+            Ok(Some(Stmt::Definition(
                 func_name.clone(),
                 Expr::Val(
-                    Val::Lambda(
-                        // the function string contains the body of the definition for error handling, printing etc.
-                        body_str.clone(),
-                        names,
-                        params.clone(),
-                        Arc::new({
-                            move |xs: Vec<Val>, env, span| {
-                                if xs.len() != param_count {
-                                    // throw an error if the argument count is incorrect
-                                    return Err(Error::FnArgCount(
-                                        func_name.clone(),
-                                        param_count,
-                                        xs.len(),
-                                        span,
-                                    ));
-                                } else {
-                                    // otherwise add arguments to the environment
-                                    let mut env_inner = env.clone(); // TODO: avoid clone
-                                    for (key, val) in params.iter().zip(xs) {
-                                        env_inner.insert((*key).to_owned(), val);
-                                    }
-                                    // then evaluate the function body expression in the new, inner scope
-                                    eval_expr(&body_expr, &env_inner)
-                                }
-                            }
-                        }),
-                    ),
+                    create_function(func_name, params, body_expr, body_str),
                     span,
                 ),
                 span,
-            ))
+            )))
         }
         _ => unreachable!(),
     }
 }
 
-pub fn parse_main(input: &str) -> Result<Program, Error> {
+pub fn parse_main(src: &str) -> Result<Program, Error> {
     let mut output_counter = 0;
-    match <TexParser as pest::Parser<Rule>>::parse(Rule::main, input) {
-        Ok(res) => Ok(res
-            .into_iter()
-            .map(|stmt| match stmt.as_rule() {
-                Rule::EOI => None,
-                Rule::statement => {
-                    parse_stmt(stmt.into_inner().next().unwrap(), &mut output_counter)
+    match <TexParser as pest::Parser<Rule>>::parse(Rule::main, src) {
+        Ok(res) => {
+            let mut prog = vec![];
+            for stmt in res{
+                match stmt.as_rule() {
+                    Rule::EOI => {},
+                    Rule::statement => {
+                        let pairs = stmt.into_inner().next().unwrap();
+                        if let Some(parsed) = parse_stmt(pairs, &mut output_counter, src)?{
+                            prog.push(parsed);
+                        };
+                    },
+                    _ => {
+                        println!("{:?}", stmt);
+                        unreachable!()
+                    }
                 }
-                _ => {
-                    println!("{:?}", stmt);
-                    unreachable!()
-                }
-            })
-            .flatten()
-            .collect()),
+            }
+            Ok(prog)
+        },
         Err(err) => Err(pest_err_adapter(err)),
     }
 }

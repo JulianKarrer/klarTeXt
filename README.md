@@ -36,13 +36,13 @@ This repository contains the klarTeXt interpreter for LaTeX documents, written i
 - [x] Predefined functions like `exp`, `log_{...}`, `ln`, `sin`, `cos`, `tan` (and respective inverses like `\arcsin`) `min`, `max`, `\Theta`, ...
 - [x] User-defined functions like `f(x,y) = 2x+y^2` or `\text{comp}(f,g,x) = f(g(x))`
   - Functions are first-class you can print and combine them
+- [x] Sums and products like `\sum_{i=0}^5 i` or `\prod_{j=5}^{10} \pi j^2`
 
 And more to come:
 - [ ] Complex numbers and the constant literal `i`
 - [ ] More printing options (exact fractions? big integers? scientific notation?)
 - [ ] Vectors, matrices, tensors (arrays? tuples?)
 - [ ] Control flow, mutable assignments and iteration (guarantee termination, total language?)
-- [ ] Sums, products and other iterators
 - [ ] Drawing from random distributions
 - [ ] Pointwise function application on large vectors via GPGPU (graphics and simulation!)
 - [ ] More IO options (plots, csv input, file output)
@@ -73,6 +73,7 @@ And more to come:
       - exponential and logarithmic `\exp, \ln, \log, \lg`
       - minimum and maximum (with any number of arguments!) `\min, \max`
       - others like the Heaviside theta `\Theta`
+    - sums and products (`\sum_{i=0}^5 i`, `\prod_{j=5}^{10} \pi j^2`)
   - Constant **DEFINITIONS** `C = \frac{4}{3}\pi R^3`, `R = 5`
     - the order they are written in does not matter
     - these are currently evaluated after parsing to a 64-bit floating point number

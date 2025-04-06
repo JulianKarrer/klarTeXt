@@ -1,37 +1,42 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::{
-    error::{Error, Warning, WARNINGS},
-    eval_expr, Env, Expr, Program, Stmt, PREDEFINED,
+    error::{Error, Warning, WARNINGS}, eval_expr, Env, Expr, Program, Stmt, Val, PREDEFINED
 };
 
 pub fn names_in_expr(expr: &Expr) -> HashSet<String> {
     match expr {
         Expr::Val(val, _) => match val {
-            crate::Val::Num(_) => HashSet::new(),
-            crate::Val::Lambda(_, depends_on, _, _) => depends_on.clone(),
+                        Val::Num(_) => HashSet::new(),
+                        Val::Lambda(_, depends_on, _, _) => depends_on.clone(),
+            },
+        Expr::Sum(_, val, _) | Expr::Prod(_, val, _)=> {
+            match val {
+                Val::Num(_) => unreachable!(),
+                Val::Lambda(_, depends_on, _, _) => depends_on.clone(),
+            }
         },
         Expr::Ident(name, _) => HashSet::from([name.to_owned()]),
         Expr::Neg(expr, _)
-        | Expr::Fac(expr, _)
-        | Expr::Sqrt(expr, _)
-        | Expr::Root(_, expr, _, _) => names_in_expr(expr),
+            | Expr::Fac(expr, _)
+            | Expr::Sqrt(expr, _)
+            | Expr::Root(_, expr, _, _) => names_in_expr(expr),
         Expr::Add(expr1, expr2, _)
-        | Expr::Sub(expr1, expr2, _)
-        | Expr::Mul(expr1, expr2, _)
-        | Expr::IMul(expr1, expr2, _)
-        | Expr::Div(expr1, expr2, _)
-        | Expr::Pow(expr1, expr2, _) => &names_in_expr(expr1) | &names_in_expr(&expr2),
+            | Expr::Sub(expr1, expr2, _)
+            | Expr::Mul(expr1, expr2, _)
+            | Expr::IMul(expr1, expr2, _)
+            | Expr::Div(expr1, expr2, _)
+            | Expr::Pow(expr1, expr2, _) => &names_in_expr(expr1) | &names_in_expr(&expr2),
         Expr::FnApp(name, exprs, _, _) => {
-            // collect names in argument expressions
-            let args_names = exprs
-                .iter()
-                .map(|expr| names_in_expr(&expr))
-                .reduce(|acc: HashSet<String>, e: HashSet<String>| &acc | &e)
-                .unwrap();
-            // combine with names in function expression
-            &HashSet::from([name.to_owned()]) | &args_names
-        }
+                // collect names in argument expressions
+                let args_names = exprs
+                    .iter()
+                    .map(|expr| names_in_expr(&expr))
+                    .reduce(|acc: HashSet<String>, e: HashSet<String>| &acc | &e)
+                    .unwrap();
+                // combine with names in function expression
+                &HashSet::from([name.to_owned()]) | &args_names
+            }
     }
 }
 

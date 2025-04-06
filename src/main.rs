@@ -9,11 +9,7 @@ use predefined::PREDEFINED;
 use resolve_def::resolve_const_definitions;
 
 use std::{
-    collections::{HashMap, HashSet},
-    f64::{self, INFINITY, NEG_INFINITY},
-    fmt::{Debug, Display},
-    fs,
-    sync::Arc,
+    collections::{HashMap, HashSet}, f64::{self, INFINITY, NEG_INFINITY}, fmt::{Debug, Display}, fs, ops::RangeInclusive, sync::Arc
 };
 mod error;
 mod io;
@@ -49,6 +45,9 @@ enum Expr {
     IMul(Box<Expr>, Box<Expr>, SpanInfo),
     Div(Box<Expr>, Box<Expr>, SpanInfo),
     Pow(Box<Expr>, Box<Expr>, SpanInfo),
+
+    Sum(RangeInclusive<i64>, Val, SpanInfo),
+    Prod(RangeInclusive<i64>, Val, SpanInfo),
 }
 
 #[derive(Clone)]
@@ -175,129 +174,152 @@ fn eval_expr(expr: &Expr, env: &Env) -> Result<Val, Error> {
     match expr {
         Expr::Ident(name, _) => lookup_env(name, env, span),
         Expr::FnApp(func_name, args, name_span, _) => {
-            // check if the function name is in the environment
-            // if so, get the corresponding value
-            let func_val = lookup_env(func_name, env, span)?;
-
-            match func_val {
-                // check if this is ACTUALLY an implicit multiplication
-                // - if fn_name is actually a numeric type
-                // - AND there is a single argument
-                // then interpret this as an implicit multiplication
-                Val::Num(x) => match &args[..] {
-                    [arg] => {
-                        return eval_expr(
-                            &Expr::IMul(
-                                Box::new(Expr::Val(Val::Num(x), *name_span)),
-                                arg.clone(),
-                                span,
-                            ),
-                            env,
-                        )
-                    }
-                    _ => Err(Error::TypeError(Typ::Lam.name(), Typ::Num.name(), span)),
-                },
-                // otherwise, there is a function value to work with
-                Val::Lambda(_, _, _, func) => {
-                    // evaluate the arguments
-                    let arg_vals = args
-                        .iter()
-                        .map(|arg| eval_expr(arg, env))
-                        .collect::<Result<Vec<Val>, Error>>()?;
-                    // call the function
-                    func(arg_vals, env, span)
+                            // check if the function name is in the environment
+                            // if so, get the corresponding value
+                            let func_val = lookup_env(func_name, env, span)?;
+        
+                            match func_val {
+                                // check if this is ACTUALLY an implicit multiplication
+                                // - if fn_name is actually a numeric type
+                                // - AND there is a single argument
+                                // then interpret this as an implicit multiplication
+                                Val::Num(x) => match &args[..] {
+                                    [arg] => {
+                                        return eval_expr(
+                                            &Expr::IMul(
+                                                Box::new(Expr::Val(Val::Num(x), *name_span)),
+                                                arg.clone(),
+                                                span,
+                                            ),
+                                            env,
+                                        )
+                                    }
+                                    _ => Err(Error::TypeError(Typ::Lam.name(), Typ::Num.name(), span)),
+                                },
+                                // otherwise, there is a function value to work with
+                                Val::Lambda(_, _, _, func) => {
+                                    // evaluate the arguments
+                                    let arg_vals = args
+                                        .iter()
+                                        .map(|arg| eval_expr(arg, env))
+                                        .collect::<Result<Vec<Val>, Error>>()?;
+                                    // call the function
+                                    func(arg_vals, env, span)
+                                }
+                            }
                 }
-            }
-        }
         Expr::Val(val, _) => match val {
-            Val::Num(x) => Ok(Val::Num(*x)),
-            Val::Lambda(_, _, _, _) => Ok(val.clone()),
-        },
+                    Val::Num(x) => Ok(Val::Num(*x)),
+                    Val::Lambda(_, _, _, _) => Ok(val.clone()),
+                },
         Expr::Neg(x, _) => Ok(Val::Num(-eval_num(x, env)?)),
         Expr::Fac(x, span) => {
-            let val = eval_num(x, env)?;
-            let val_int = val.round() as u64;
-            if val < 0. {
-                Err(Error::FactorialNeg(*span))
-            } else if (val - val_int as f64).abs() > std::f64::EPSILON {
-                Err(Error::FactorialFloat(*span))
-            } else {
-                Ok(Val::Num((1..=val_int).map(|x| x as f64).product()))
-            }
-        }
+                    let val = eval_num(x, env)?;
+                    let val_int = val.round() as u64;
+                    if val < 0. {
+                        Err(Error::FactorialNeg(*span))
+                    } else if (val - val_int as f64).abs() > std::f64::EPSILON {
+                        Err(Error::FactorialFloat(*span))
+                    } else {
+                        Ok(Val::Num((1..=val_int).map(|x| x as f64).product()))
+                    }
+                }
         Expr::Add(lhs, rhs, _) => Ok(Val::Num(eval_num(lhs, env)? + eval_num(rhs, env)?)),
         Expr::Sub(lhs, rhs, _) => Ok(Val::Num(eval_num(lhs, env)? - eval_num(rhs, env)?)),
         Expr::IMul(lhs, rhs, _) => {
-            // check if two numbers are implicitly multiplied
-            match **rhs {
-                Expr::Val(Val::Num(_), _) => match **lhs {
-                    Expr::Val(Val::Num(_), _) => {
-                        return Err(Error::ImpMulNumNum(lhs.span(), rhs.span()))
-                    }
-                    _ => return Err(Error::ImpMulRhsNum(lhs.span(), rhs.span())),
-                },
-                _ => {}
-            };
-            // otherwise perform the multiplication
-            Ok(Val::Num(custom_mul(lhs, rhs, env)?))
-        }
+                    // check if two numbers are implicitly multiplied
+                    match **rhs {
+                        Expr::Val(Val::Num(_), _) => match **lhs {
+                            Expr::Val(Val::Num(_), _) => {
+                                return Err(Error::ImpMulNumNum(lhs.span(), rhs.span()))
+                            }
+                            _ => return Err(Error::ImpMulRhsNum(lhs.span(), rhs.span())),
+                        },
+                        _ => {}
+                    };
+                    // otherwise perform the multiplication
+                    Ok(Val::Num(custom_mul(lhs, rhs, env)?))
+                }
         Expr::Mul(lhs, rhs, _) => Ok(Val::Num(custom_mul(lhs, rhs, env)?)),
         Expr::Div(lhs, rhs, _) => {
-            let lhs = eval_num(lhs, env)?;
-            let rhs = eval_num(rhs, env)?;
-            let res = lhs / rhs;
-            if !res.is_nan() {
-                Ok(Val::Num(res))
-            } else {
-                if rhs == f64::INFINITY {
-                    Err(Error::MathError(
-                        "Divide by Infinity".to_owned(),
-                        "division".to_owned(),
-                        span,
-                    ))
-                } else {
-                    Err(Error::DivByZero(span))
+                    let lhs = eval_num(lhs, env)?;
+                    let rhs = eval_num(rhs, env)?;
+                    let res = lhs / rhs;
+                    if !res.is_nan() {
+                        Ok(Val::Num(res))
+                    } else {
+                        if rhs == f64::INFINITY {
+                            Err(Error::MathError(
+                                "Divide by Infinity".to_owned(),
+                                "division".to_owned(),
+                                span,
+                            ))
+                        } else {
+                            Err(Error::DivByZero(span))
+                        }
+                    }
                 }
-            }
-        }
         Expr::Pow(lhs, rhs, _) => {
-            let res = eval_num(lhs, env)?.powf(eval_num(rhs, env)?);
-            if !res.is_nan() {
-                Ok(Val::Num(res))
-            } else {
-                Err(Error::ComplexNumber(span_merge(lhs.span(), rhs.span())))
-            }
-        }
+                    let res = eval_num(lhs, env)?.powf(eval_num(rhs, env)?);
+                    if !res.is_nan() {
+                        Ok(Val::Num(res))
+                    } else {
+                        Err(Error::ComplexNumber(span_merge(lhs.span(), rhs.span())))
+                    }
+                }
         Expr::Sqrt(expr, _) => {
-            let res = eval_num(expr, env)?.sqrt();
-            if !res.is_nan() {
-                Ok(Val::Num(res))
-            } else {
-                Err(Error::ComplexNumber(span))
-            }
-        }
+                    let res = eval_num(expr, env)?.sqrt();
+                    if !res.is_nan() {
+                        Ok(Val::Num(res))
+                    } else {
+                        Err(Error::ComplexNumber(span))
+                    }
+                }
         Expr::Root(degree, radicant, degree_span, radicant_span) => {
-            let degree = eval_num(degree, env)?;
-            if degree.abs() < f64::EPSILON {
-                // Check for zero-th root
-                Err(Error::ZerothRoot(*degree_span))
-            } else {
-                let res = eval_num(radicant, env)?.powf(1.0 / degree);
-                if !res.is_nan() {
-                    Ok(Val::Num(res))
-                } else {
-                    Err(Error::ComplexNumber(*radicant_span))
+                    let degree = eval_num(degree, env)?;
+                    if degree.abs() < f64::EPSILON {
+                        // Check for zero-th root
+                        Err(Error::ZerothRoot(*degree_span))
+                    } else {
+                        let res = eval_num(radicant, env)?.powf(1.0 / degree);
+                        if !res.is_nan() {
+                            Ok(Val::Num(res))
+                        } else {
+                            Err(Error::ComplexNumber(*radicant_span))
+                        }
+                    }
+                },
+        Expr::Sum(range, val, _) => {
+            eval_reduction(env, range, val, span, |a,b|{a+b}, 0.)
+        },
+        Expr::Prod(range, val, _) => {
+            eval_reduction(env, range, val, span, |a,b|{a*b}, 1.)
+        },
+    }
+}
+
+fn eval_reduction<R: Fn(f64, f64)->f64>(env:&Env, range:&RangeInclusive<i64>, val:&Val, span:SpanInfo, reduction_op:R, neutral_element:f64)->Result<Val, Error>{
+    match val{
+        Val::Num(_) => unreachable!(),
+        Val::Lambda(_, _, _, func) => {
+            let mut res = neutral_element;
+            for i in range.clone(){
+                let ith_val = func(vec![Val::Num(i as f64)], env, span)?;
+                match ith_val{
+                    Val::Num(ith_f64) => {res = reduction_op(res, ith_f64)},
+                    _ => return Err(Error::SumBodyNotNumeric(span)),
                 }
             }
-        }
+            Ok(Val::Num(res))
+        },
     }
 }
 
 /// Print debug information to `stdout` while executing the program instead of writing results to output files.
 /// Throws the same errors as the regular [`run`] function.
 fn debug_run(prog: Program, env: Env) -> Result<(), Error> {
-    // println!("PROGRAM: -----------");
-    // println!("{:#?}", prog);
+    println!("PROGRAM: -----------");
+    println!("{:#?}", prog);
     println!("DEFINITIONS: -----------");
     for (k, v) in &env {
         println!("{} = {}", k, v);
