@@ -101,7 +101,7 @@ impl Display for Val {
         match self {
             Val::Num(INFINITY) => write!(f, r"\infty"),
             Val::Num(NEG_INFINITY) => write!(f, r"-\infty"),
-            Val::Num(x) => write!(f, "{}", x),
+            Val::Num(x) => write!(f, "{}", snap_to_int(*x)),
             Val::Lambda(name, _, params, _) => {
                 if params.is_empty() {
                     write!(f, "{}", name)
@@ -312,6 +312,21 @@ fn eval_reduction<R: Fn(f64, f64)->f64>(env:&Env, range:&RangeInclusive<i64>, va
             }
             Ok(Val::Num(res))
         },
+    }
+}
+
+fn snap_to_int(val:f64)->f64{
+    // if distance to next integer is below the f64 precision limit,
+    // round
+    if (val.round() - val).abs() < f64::EPSILON{
+        // additionally, avoid -0.0
+        if val.abs() < f64::EPSILON{
+            0.
+        } else {
+            val.round()
+        }
+    } else {
+        val
     }
 }
 

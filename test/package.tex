@@ -1,3 +1,7 @@
+
+\usepackage{xfrac}
+\usepackage{amsmath}
+
 \newcounter{klarCall}
 \newcommand{\callKlarTeXt}{%
   \immediate\write18{%
@@ -61,15 +65,16 @@
 
 \AtBeginDocument{\callKlarTeXt}
 
-\newenvironment{program}[1]{%
-\newcommand{\print}[1]{{%
-##1 = %
-\stepcounter{klarCall}%
-\edef\tempFile{klarTeXt_\jobname_\theklarCall.tex}%
-  \IfFileExists{\tempFile}{%
-    \input{\tempFile}%
-  }{%
-    unknown%
+
+\newenvironment{program}[1][]{%
+  \newcommand{\print}[1]{%
+    ##1 = %
+    \stepcounter{klarCall}%
+    \edef\tempFile{klarTeXt_\jobname_\theklarCall.tex}%
+    \IfFileExists{\tempFile}{%
+      \input{\tempFile}%
+    }{%
+      \text{unknown}%
+    }%
   }%
-}} %
 }{}

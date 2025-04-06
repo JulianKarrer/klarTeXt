@@ -373,6 +373,8 @@ fn rule_description(rule: Rule) -> &'static str {
         Rule::WHITESPACE => "whitespace",
         Rule::COMMENT => "a comment",
         Rule::IGNORE => "whitespace or a comment",
+        Rule::IGNORE_NO_LF => r"whitespace or a comment with no line break (\\)",
+        Rule::no_lf_statement => r"a statement with no line break (\\)",
         Rule::outside => "text outside of the 'program' environment",
         Rule::main => "a latex document with a program environment",
         Rule::program => "a program environment",
@@ -409,8 +411,8 @@ fn rule_description(rule: Rule) -> &'static str {
         Rule::nthroot => r"some root (\sqrt[3]{}, \sqrt[\pi]{}, ...)",
         Rule::bracketed_expr => r"a bracketed expression like (...), \left( ... \right) or {...}",
         Rule::fn_app => {
-                        r"a function call (or an implicit multiplication like x(5+2), depending on what x is)"
-            }
+                            r"a function call (or an implicit multiplication like x(5+2), depending on what x is)"
+                }
         Rule::fn_definition => r"a function definition",
         Rule::fn_signautre => r"a function signature",
         Rule::infinity => r"infinity (\infty)",
@@ -419,6 +421,7 @@ fn rule_description(rule: Rule) -> &'static str {
         Rule::wrapped_digit => r"a single digit",
         Rule::prod => r"a product (\sum_{i=1}^{8} i^2)",
         Rule::reduction => r"a reduction, like a sum or product",
+        Rule::newl_seperated_statemtnts => r"statements seperated by newlines (\\)"
     }
 }
 

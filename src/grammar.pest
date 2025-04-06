@@ -1,8 +1,9 @@
 
   // IGNORE
-  WHITESPACE = _{ " " | "\t" | "\n" | "\r" | "\\," |"\\quad" | "\\\\" }
+  WHITESPACE = _{ " " | "\t" | "\n" | "\r" | "\\," |"\\quad" | "&" }
   COMMENT = _{ "%" ~ (!"\n" ~ ANY)* ~ "\n" }
-  IGNORE = _{WHITESPACE | COMMENT}
+  IGNORE = _{WHITESPACE | COMMENT | "\\\\"}
+  IGNORE_NO_LF = _{WHITESPACE | COMMENT } // should be precisely IGNORE but without \\
 
   // FILE PARSING
   outside = _{ (!"\\begin{program}" ~ ANY)+ }
@@ -10,7 +11,7 @@
 
   // look for {program} environments
   program = _{
-    "\\begin{program}" ~ IGNORE* ~
+    "\\begin{program}" ~ ("[" ~ (!("]") ~ ANY)* ~ "]")? ~ IGNORE* ~
     ( math_evn ~ IGNORE* )* ~
     "\\end{program}"
   }
@@ -23,8 +24,18 @@
 
   // in {program}, look for math environments
   math_evn = _{
-    "$" ~ IGNORE* ~ statement ~ IGNORE* ~ "$"
+    ("$" ~ IGNORE* ~ statement ~ IGNORE* ~ "$")
+    | ("\\(" ~ IGNORE* ~ statement ~ IGNORE* ~ "\\)")
+    | ("\\[" ~ IGNORE* ~ statement ~ IGNORE* ~ "\\]")
+    | ("\\begin{math}" ~ IGNORE* ~ statement ~ IGNORE* ~ "\\end{math}")
+    | ("\\begin{equation}" ~ IGNORE* ~ statement ~ IGNORE* ~ "\\end{equation}")
+    | ("\\begin{equation*}" ~ IGNORE* ~ statement ~ IGNORE* ~ "\\end{equation*}")
+    | ("\\begin{displaymath}" ~ IGNORE* ~ statement ~ IGNORE* ~ "\\end{displaymath}")
+    | ("\\begin{align}" ~ newl_seperated_statemtnts ~ "\\end{align}")
+    | ("\\begin{align*}" ~ newl_seperated_statemtnts ~ "\\end{align*}")
   }
+  no_lf_statement = _{IGNORE_NO_LF* ~ statement ~ IGNORE_NO_LF*}
+  newl_seperated_statemtnts = _{("\\\\")* ~ no_lf_statement ~ ("\\\\" ~ no_lf_statement)* ~ ("\\\\")*}
 
   expr = ${ 
     prefix? ~ WHITESPACE* ~ primary ~ postfix? ~ (infix ~ prefix?~ WHITESPACE* ~ primary ~ postfix? )* 
@@ -79,7 +90,7 @@
   // IDENTIFIERS
   // keywords are names that may not follow after \
   // e.g. \phi is a valid identifier, \left is not
-  keyword = { "\\left" | "\\right" | "\\cdot" | "\\frac" | "\\sfrac" | "\\sqrt"| "\\infty" | "\\sum" | "\\prod" }
+  keyword = { "\\left" | "\\right" | "\\cdot" | "\\frac" | "\\sfrac" | "\\sqrt"| "\\infty" | "\\sum" | "\\prod" | "\\begin" | "\\end" }
   identifier = @{ (!keyword ~ (simple_identifier | latex_symbol)) ~ subscript? }
   simple_identifier = _{ ASCII_ALPHA | ("\\text" ~ "{"~ nested_block ~"}") }
   latex_symbol = _{ "\\" ~ ASCII_ALPHA+ }
