@@ -4,6 +4,8 @@ use std::{
     sync::{Arc, LazyLock},
 };
 
+use peroxide::fuga::{gamma, phi};
+
 use crate::{
     error::{lambda_arg_err, Error},
     utils::Either,
@@ -112,7 +114,13 @@ pub static PREDEFINED: LazyLock<Env> = LazyLock::new(|| {
             }
         }),
         // SPECIAL
-
+        predefined_unary_fn(r"\Gamma", "approximate gamma function", None, |x| gamma(x)),
+        predefined_unary_fn(
+            r"\Phi",
+            "CDF of the standard normal distribution",
+            None,
+            |x| phi(x),
+        ),
         // MIN / MAX
         (
             r"\min".to_owned(),

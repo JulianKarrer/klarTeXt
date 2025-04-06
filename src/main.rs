@@ -1,3 +1,7 @@
+// #[macro_use]
+// extern crate peroxide;
+// use peroxide::prelude::*;
+
 use error::{handle_errs, span_merge, Error, SpanInfo};
 use io::{delete_matching_files, get_file_name, write_to_sibling_file};
 use parse::parse_main;

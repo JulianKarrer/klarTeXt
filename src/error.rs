@@ -169,7 +169,6 @@ pub fn handle_errs<T>(
     // handle warnings
     {
         let mut warnings = WARNINGS.lock().unwrap();
-        println!("warnings :{:?}", warnings);
         for warning in warnings.iter() {
             ariadne_write(warning, filename, src, txt_file_mode, true, &mut warn_out);
         }
