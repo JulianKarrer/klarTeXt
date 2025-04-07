@@ -40,10 +40,14 @@ pub enum Error {
     FnArgs(String, String, String, SpanInfo),
     /// Fn name, expected number, saw number, where
     FnArgCount(String, usize, usize, SpanInfo),
+    // REDUCTIONS ---------------------
     /// where
-    SumNonIntegerVar(SpanInfo),
+    ReductionNonIntegerVar(SpanInfo),
     /// where
-    SumBodyNotNumeric(SpanInfo),
+    ReductionBodyNotNumeric(SpanInfo),
+    // INTEGRALS ----------------------
+    IntegralNot1D(SpanInfo),
+    IntegralInternalErr(String, SpanInfo),
 }
 
 #[derive(Debug)]
@@ -59,8 +63,8 @@ pub struct SpanInfo {
     pub from: usize,
     pub to: usize,
 }
-impl SpanInfo{
-    pub fn read_source(&self, src: &str)->String{
+impl SpanInfo {
+    pub fn read_source(&self, src: &str) -> String {
         src[self.from..self.to].to_owned()
     }
 }
@@ -92,7 +96,7 @@ impl From<&SpanInfo> for Range<usize> {
 impl Expr {
     pub fn span(&self) -> SpanInfo {
         match self {
-            Expr::Val(_, span_info) => *span_info,
+            Expr::Const(_, span_info) => *span_info,
             Expr::Ident(_, span_info) => *span_info,
             Expr::Neg(_, span_info) => *span_info,
             Expr::Fac(_, span_info) => *span_info,
@@ -107,6 +111,7 @@ impl Expr {
             Expr::FnApp(_, _, _, span_info) => *span_info,
             Expr::Sum(_, _, span_info) => *span_info,
             Expr::Prod(_, _, span_info) => *span_info,
+            Expr::Int(_, _, _, _, span_info) => *span_info,
         }
     }
 }
@@ -212,9 +217,9 @@ impl ErrReportable for Error {
             Error::DefMissing(span_info, _) => span_info.into(),
             Error::DefMultiply(span_info, _) => span_info.into(),
             Error::DefCircular(cycle) => {
-                                cycle.iter().map(|(_, span, _)| span.from).min().unwrap()
-                                    ..cycle.iter().map(|(_, span, _)| span.to).max().unwrap()
-                            }
+                cycle.iter().map(|(_, span, _)| span.from).min().unwrap()
+                    ..cycle.iter().map(|(_, span, _)| span.to).max().unwrap()
+            }
             Error::FactorialNeg(span_info) => span_info.into(),
             Error::FactorialFloat(span_info) => span_info.into(),
             Error::DivByZero(span_info) => span_info.into(),
@@ -226,68 +231,79 @@ impl ErrReportable for Error {
             Error::FnArgs(_, _, _, span_info) => span_info.into(),
             Error::MathError(_, _, span_info) => span_info.into(),
             Error::FnArgCount(_, _, _, span_info) => span_info.into(),
-            Error::SumBodyNotNumeric(span_info) => span_info.into(),
-            Error::SumNonIntegerVar(span_info) => span_info.into(),
+            Error::ReductionBodyNotNumeric(span_info) => span_info.into(),
+            Error::ReductionNonIntegerVar(span_info) => span_info.into(),
+            Error::IntegralNot1D(span_info) => span_info.into(),
+            Error::IntegralInternalErr(_, span_info) => span_info.into(),
         }
     }
 
     fn labels(&self) -> Vec<(Range<usize>, String)> {
         match self {
             Error::ParseError(_, _) => {
-                                vec![(self.span(), "the unexpected input is here".to_owned())]
-                            }
+                vec![(self.span(), "the unexpected input is here".to_owned())]
+            }
             Error::DefMissing(_, name) => vec![(
-                                self.span(),
-                                format!("The identifier {} is undefined.", name),
-                            )],
+                self.span(),
+                format!("The identifier {} is undefined.", name),
+            )],
             Error::DefMultiply(_, name) => vec![(
-                                self.span(),
-                                format!("The identifier {} was defined at least twice", name),
-                            )],
+                self.span(),
+                format!("The identifier {} was defined at least twice", name),
+            )],
             Error::DefCircular(cycle) => cycle
-                                .iter()
-                                .map(|(name, span, depends_on)| {
-                                    (span.into(), format!("{} depends on {}", name, depends_on))
-                                })
-                                .collect(),
+                .iter()
+                .map(|(name, span, depends_on)| {
+                    (span.into(), format!("{} depends on {}", name, depends_on))
+                })
+                .collect(),
             Error::ImpMulRhsNum(lhs, rhs) => vec![
-                                (lhs.into(), "this expression gets multiplied".to_owned()),
-                                (
-                                    rhs.into(),
-                                    "with a numerical literal on the right-hand side".to_owned(),
-                                ),
-                            ],
+                (lhs.into(), "this expression gets multiplied".to_owned()),
+                (
+                    rhs.into(),
+                    "with a numerical literal on the right-hand side".to_owned(),
+                ),
+            ],
             Error::ImpMulNumNum(lhs, rhs) => vec![
-                                (lhs.into(), "this is a number".to_owned()),
-                                (rhs.into(), "this is also a number".to_owned()),
-                            ],
+                (lhs.into(), "this is a number".to_owned()),
+                (rhs.into(), "this is also a number".to_owned()),
+            ],
             Error::FactorialNeg(_) => vec![(
-                                self.span().start..self.span().end - 1,
-                                "This expression evaluates to a negative number.".to_owned(),
-                            )],
+                self.span().start..self.span().end - 1,
+                "This expression evaluates to a negative number.".to_owned(),
+            )],
             Error::FactorialFloat(_) => vec![(
-                                self.span().start..self.span().end - 1,
-                                "This expression evaluates to a non-integer.".to_owned(),
-                            )],
+                self.span().start..self.span().end - 1,
+                "This expression evaluates to a non-integer.".to_owned(),
+            )],
             Error::DivByZero(_) => vec![(
-                                self.span(),
-                                "This division results in an undefined value".to_owned(),
-                            )],
+                self.span(),
+                "This division results in an undefined value".to_owned(),
+            )],
             Error::ComplexNumber(_) => {
-                                vec![(self.span(), "This evaluates to a complex number".to_owned())]
-                            }
+                vec![(self.span(), "This evaluates to a complex number".to_owned())]
+            }
             Error::ZerothRoot(_) => vec![(self.span(), "This evaluates to zero".to_owned())],
             Error::TypeError(expected, _, _) => {
-                                vec![(self.span(), format!("expected {} here", expected))]
-                            }
+                vec![(self.span(), format!("expected {} here", expected))]
+            }
             Error::FnArgs(_, _, _, _) => vec![(self.span(), "Wrong argument type here".to_owned())],
             Error::MathError(_, _, _) => vec![(self.span(), "Error occured here".to_owned())],
             Error::FnArgCount(_, _, _, _) => vec![(
-                                self.span(),
-                                "This function call has a wrong argument count".to_owned(),
-                            )],
-            Error::SumBodyNotNumeric(_) =>  vec![(self.span(), "this sum is not defined".to_owned())],
-            Error::SumNonIntegerVar(_) => vec![(self.span(), "this is not an integer".to_owned())],
+                self.span(),
+                "This function call has a wrong argument count".to_owned(),
+            )],
+            Error::ReductionBodyNotNumeric(_) => {
+                vec![(self.span(), "this sum is not defined".to_owned())]
+            }
+            Error::ReductionNonIntegerVar(_) => {
+                vec![(self.span(), "this is not an integer".to_owned())]
+            }
+            Error::IntegralNot1D(_) => vec![(self.span(), "this integral is not 1D".to_owned())],
+            Error::IntegralInternalErr(_, _) => vec![(
+                self.span(),
+                "this integrand did not evaluate to a number".to_owned(),
+            )],
         }
     }
 
@@ -298,8 +314,8 @@ impl ErrReportable for Error {
             Error::DefMultiply(_, _) => "Multiply Defined Identifier".to_owned(),
             Error::DefCircular(_) => "Circular Definition".to_owned(),
             Error::ImpMulRhsNum(_, _) => {
-                                "Implicit multiplication with number on the right side".to_owned()
-                            }
+                "Implicit multiplication with number on the right side".to_owned()
+            }
             Error::ImpMulNumNum(_, _) => "Implicit multiplication of two numbers".to_owned(),
             Error::FactorialNeg(_) => "Negative argument to a factorial".to_owned(),
             Error::FactorialFloat(_) => "Non-integer argument to a factorial".to_owned(),
@@ -310,8 +326,12 @@ impl ErrReportable for Error {
             Error::FnArgs(_, _, _, _) => "Argument Type Error".to_owned(),
             Error::MathError(err_type, _, _) => err_type.to_owned(),
             Error::FnArgCount(_, _, _, _) => "Wrong Argument Count".to_owned(),
-            Error::SumBodyNotNumeric(_) => "Sum where Addition is not defined".to_owned(),
-            Error::SumNonIntegerVar(_) => "Sum over non-integers".to_owned(),
+            Error::ReductionBodyNotNumeric(_) => {
+                "Reduction where Addition is not defined".to_owned()
+            }
+            Error::ReductionNonIntegerVar(_) => "Reduction over non-integers".to_owned(),
+            Error::IntegralNot1D(_) => "Multidimensional Integral".to_owned(),
+            Error::IntegralInternalErr(_, _) => "Internal Error in Integral".to_owned(),
         }
     }
 
@@ -332,8 +352,10 @@ impl ErrReportable for Error {
             Error::FnArgs(expected, saw, name, _) =>  format!("The arguments to the {} function are wrong in their number or type.\nExpected:\n\t{}\nActually supplied:\n\t{}", name, expected, saw),
             Error::MathError(err_description, fn_name, _) => format!("There was a math error in a {}:\n\t- {}", fn_name, err_description),
             Error::FnArgCount(name, expected, saw, _) => format!("The function {} was called with {} arguments, but expected {}.", name, saw, expected),
-            Error::SumBodyNotNumeric(_) => ("The sum contains a body of a type that cannot be summed.\nPlease check if the expression has a function type, which is currently unsupported.\nMaybe you used a function name 'f' instead of a function application 'f(x)'?").to_owned(),
-            Error::SumNonIntegerVar(_) => "You attempted to sum from or to limits that do not evaluate to an integer.\nMaybe you meant to integrate instead of sum?".to_owned(),
+            Error::ReductionBodyNotNumeric(_) => ("If a sum was used, addition is not defined on the body.\nIf a product was used, multiplication is not defined on the body.\nPlease check if the expression you sum over has a function type, which is currently unsupported.\nMaybe you used a function name 'f' instead of a function application 'f(x)'?").to_owned(),
+            Error::ReductionNonIntegerVar(_) => "You attempted to sum from or to limits that do not evaluate to an integer.\nMaybe you meant to integrate instead of sum?".to_owned(),
+            Error::IntegralNot1D(_) => "Currently, only definite integrals over one integration variable are supported.\nTo calculate multidimensional integrals, please nest one integral in the other to achieve the same effect.\n\nGGauss-Kronrod G7K15 quadrature is used to integrate numerically.\nhttps://arxiv.org/pdf/1003.4629".to_owned(),
+            Error::IntegralInternalErr(intvar, _) => format!("The integrand did not evaluate to a number.\n Please check for errors inside.\nThe integration variable, which overwrites variables of the same name defined somewhere else, was {}.\n\nGauss-Kronrod G7K15 quadrature is used to integrate numerically.\nhttps://arxiv.org/pdf/1003.4629", intvar),
         }
     }
 }
@@ -391,7 +413,8 @@ fn rule_description(rule: Rule) -> &'static str {
         Rule::enclosed => "something enclosed in {} brackets",
         Rule::frac => r"a fraction \frac{}{}",
         Rule::keyword => r"a keyword like '\left', '\cdot' etc.",
-        Rule::identifier => "an identifier like 'x' or 'y_{t=0}'",
+        Rule::identifier => r"an identifier like 'x', `\pi` or 'y_{t=0}'",
+        Rule::wrapped_ident => r"an identifier like 'x', `\pi` or 'y_{t=0}'",
         Rule::simple_identifier => "a simple, single letter identifier",
         Rule::latex_symbol => r"a single latex symbol, like '\pi' or '\eta'",
         Rule::subscript => "a subscript '_{ ... }'",
@@ -411,8 +434,8 @@ fn rule_description(rule: Rule) -> &'static str {
         Rule::nthroot => r"some root (\sqrt[3]{}, \sqrt[\pi]{}, ...)",
         Rule::bracketed_expr => r"a bracketed expression like (...), \left( ... \right) or {...}",
         Rule::fn_app => {
-                            r"a function call (or an implicit multiplication like x(5+2), depending on what x is)"
-                }
+            r"a function call (or an implicit multiplication like x(5+2), depending on what x is)"
+        }
         Rule::fn_definition => r"a function definition",
         Rule::fn_signautre => r"a function signature",
         Rule::infinity => r"infinity (\infty)",
@@ -421,7 +444,8 @@ fn rule_description(rule: Rule) -> &'static str {
         Rule::wrapped_digit => r"a single digit",
         Rule::prod => r"a product (\sum_{i=1}^{8} i^2)",
         Rule::reduction => r"a reduction, like a sum or product",
-        Rule::newl_seperated_statemtnts => r"statements seperated by newlines (\\)"
+        Rule::newl_seperated_statemtnts => r"statements seperated by newlines (\\)",
+        Rule::integral => r"a definite, 1D integral (\int_{...}^{...} ... \,dx)",
     }
 }
 

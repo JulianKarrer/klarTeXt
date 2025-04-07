@@ -3,11 +3,13 @@
     <img src="./res/logo.jpg" width=200 height = 200/>
 </p>
 
+KlarTeXt is a purely functional programming language embedded in LaTeX that turns your equations into code by interpreting them during compilation.
+
 Often, LaTeX is used to write reports about computations. If all relevant details to describe the computation are in the report, as they should be, it should also be possible to use the report itself as source code.
 
 > All relevant information should be contained in the LaTeX document already, plain to see, in **Klartext**.
 
-Describing computations in LaTeX and executing them on a calculator or in a separate python script, copying and pasting results back and forth, is redundant and error-prone.
+Describing computations in LaTeX and executing them on a calculator or in a separate python script, copying and pasting results back and forth, is redundant and error-prone. KlarTeXt turns your favourite LaTeX compiler into a glorified calculator by attaching a parser and interpreter.
 
 This repository contains the klarTeXt interpreter for LaTeX documents, written in Rust by Julian Karrer under the MIT license. Feel free to contribute, fork, share, raise issues or [contact me](mailto:jk@studioerika.de).
 
@@ -21,7 +23,13 @@ This repository contains the klarTeXt interpreter for LaTeX documents, written i
 # Features
 - [x] Common operations like `+`,`-`, multiplication (`\cdot`), division (`\frac{...}{...}`), exponentiation (`^`), n-th roots etc.
 - [x] Predefined constants like `e`, π (`\pi`), etc.
-- [x] Global, constant defintions like `C = \frac{4}{3}\pi R^3`, `R=2` where the order of the definitions does not matter
+- [x] Predefined functions like `exp`, `log_{...}`, `ln`, `sin`, `cos`, `tan` (and respective inverses like `\arcsin`) `min`, `max`, `\Theta`, ...
+- [x] User-defined functions like `f(x,y) = 2x+y^2` or `\text{comp}(f,g,x) = f(g(x))`
+  - Functions are first-class you can print and combine them
+- [x] Sums and products like `\sum_{i=0}^5 i` or `\prod_{j=5}^{10} \pi j^2`
+- [x] Definite integrals like `\int_0^\pi \sin(x)\,dx` using Gauss-Kronrod G7K15 quadrature
+
+- [x] Custom constant defintions like `C = \frac{4}{3}\pi R^3`, `R=2` where the order of the definitions does not matter
   - klarTeXt creates a dependency graph of constant definitions and resolves it topologically, detecting errors like loops or missing definitions.
 - [x] Print statements that integrate into Latex, e.g. rendering `$\print{5x}$` as `5x = 4.57`
 - [x] Useful, precise and [beautiful](https://docs.rs/ariadne/latest/ariadne/)  error messages and warnings
@@ -33,10 +41,7 @@ This repository contains the klarTeXt interpreter for LaTeX documents, written i
   or directly in your favourite LaTeX IDE:
     
   <img src="./res/error_num_right_vscode.png" width=500 />\
-- [x] Predefined functions like `exp`, `log_{...}`, `ln`, `sin`, `cos`, `tan` (and respective inverses like `\arcsin`) `min`, `max`, `\Theta`, ...
-- [x] User-defined functions like `f(x,y) = 2x+y^2` or `\text{comp}(f,g,x) = f(g(x))`
-  - Functions are first-class you can print and combine them
-- [x] Sums and products like `\sum_{i=0}^5 i` or `\prod_{j=5}^{10} \pi j^2`
+
 
 And more to come:
 - [ ] Complex numbers and the constant literal `i`
@@ -74,6 +79,7 @@ And more to come:
       - minimum and maximum (with any number of arguments!) `\min, \max`
       - others like the Heaviside theta `\Theta`
     - sums and products (`\sum_{i=0}^5 i`, `\prod_{j=5}^{10} \pi j^2`)
+    - definite integrals like `\int_0^\pi \sin(x)\,dx`
   - Constant **DEFINITIONS** `C = \frac{4}{3}\pi R^3`, `R = 5`
     - the order they are written in does not matter
     - these are currently evaluated after parsing to a 64-bit floating point number
@@ -90,6 +96,4 @@ Many programming languages claim to be easy to learn since they are 'close to ma
 KlarTeXt aims to require little to no explanation for people that use LaTeX to typeset equations and algorithms, but simply accept conventional notation and interpret it. 
 
 It aims to provide the tools to make reports that *are* the source code they describe, in the spirit of the [literate programming](https://en.wikipedia.org/wiki/Literate_programming) paradigm that the creator of TeX himself envisioned, similar in appeal to what computational notebooks like Jupyter provide.
-
-It turns your favourite LaTeX compiler into a glorified calculator by attaching a parser and interpreter.
 

@@ -1,6 +1,10 @@
 
   // IGNORE
-  WHITESPACE = _{ " " | "\t" | "\n" | "\r" | "\\," |"\\quad" | "&" }
+  WHITESPACE = _{ 
+  	" " | "\t" | "\n" | "\r" // classic whitespace
+    | "&" // alignment characters
+    | "\\!" | "\\:" | "\\;" | "\\ " | "\\quad" | "\\qquad" // latex spacing EXCEPT \, used in integral
+  }
   COMMENT = _{ "%" ~ (!"\n" ~ ANY)* ~ "\n" }
   IGNORE = _{WHITESPACE | COMMENT | "\\\\"}
   IGNORE_NO_LF = _{WHITESPACE | COMMENT } // should be precisely IGNORE but without \\
@@ -25,12 +29,7 @@
   // in {program}, look for math environments
   math_evn = _{
     ("$" ~ IGNORE* ~ statement ~ IGNORE* ~ "$")
-    | ("\\(" ~ IGNORE* ~ statement ~ IGNORE* ~ "\\)")
     | ("\\[" ~ IGNORE* ~ statement ~ IGNORE* ~ "\\]")
-    | ("\\begin{math}" ~ IGNORE* ~ statement ~ IGNORE* ~ "\\end{math}")
-    | ("\\begin{equation}" ~ IGNORE* ~ statement ~ IGNORE* ~ "\\end{equation}")
-    | ("\\begin{equation*}" ~ IGNORE* ~ statement ~ IGNORE* ~ "\\end{equation*}")
-    | ("\\begin{displaymath}" ~ IGNORE* ~ statement ~ IGNORE* ~ "\\end{displaymath}")
     | ("\\begin{align}" ~ newl_seperated_statemtnts ~ "\\end{align}")
     | ("\\begin{align*}" ~ newl_seperated_statemtnts ~ "\\end{align*}")
   }
@@ -82,15 +81,24 @@
   infinity = @{ "\\infty" }
 
   // BRACKETED, ENCLOSED {}
-  enclosed = _{ frac | sqrt | nthroot }
+  enclosed = _{ frac | sqrt | nthroot | integral }
   frac = !{ ("\\frac" | "\\sfrac") ~ "{" ~ expr ~ "}" ~ "{" ~ expr ~ "}"}
   sqrt = !{ "\\sqrt" ~ "{" ~ expr ~ "}" }
   nthroot = !{ "\\sqrt"~("[" ~ expr ~ "]" )?~"{" ~ expr ~ "}" }
-
+  integral = !{ "\\int" 
+  ~ "_"~ (wrapped_digit | wrapped_ident | "{" ~ expr ~ "}") // lower limit
+  ~ "^" ~ (wrapped_digit | wrapped_ident | "{" ~ expr ~ "}") // upper limit
+  ~ expr ~ "\\," ~ ("d" ~ identifier)+ // integration variables
+  }
+	
   // IDENTIFIERS
   // keywords are names that may not follow after \
   // e.g. \phi is a valid identifier, \left is not
-  keyword = { "\\left" | "\\right" | "\\cdot" | "\\frac" | "\\sfrac" | "\\sqrt"| "\\infty" | "\\sum" | "\\prod" | "\\begin" | "\\end" }
+  keyword = { 
+    "\\left" | "\\right" | "\\cdot" | "\\frac" | "\\sfrac" 
+  | "\\sqrt"| "\\infty" | "\\sum" | "\\prod" | "\\begin" | "\\end" 
+  | "\\int"
+  }
   identifier = @{ (!keyword ~ (simple_identifier | latex_symbol)) ~ subscript? }
   simple_identifier = _{ ASCII_ALPHA | ("\\text" ~ "{"~ nested_block ~"}") }
   latex_symbol = _{ "\\" ~ ASCII_ALPHA+ }
@@ -118,7 +126,7 @@
   sum       = { "\\sum" ~ reduction } // Summation
   // prod       = { "\\prod_" ~ reduction } // Product
   prod       = { "\\prod" ~ reduction } // Product
-  reduction = _{ "_" ~ "{" ~ identifier ~ "=" ~ expr ~ "}" ~ "^" ~ (wrapped_digit | "{" ~ expr ~ "}" ) }
+  reduction = _{ "_" ~ "{" ~ identifier ~ "=" ~ expr ~ "}" ~ "^" ~ (wrapped_digit | wrapped_ident | "{" ~ expr ~ "}" ) }
   // postfix
   postfix   = _{ fac }
   fac       = { "!" } // Factorial
@@ -127,3 +135,4 @@
   // wrap a digit so it has an into_inner() like expressions do
   // in case either an integer OR an expression must be parsed, like in sums
   wrapped_digit = { digit }
+  wrapped_ident = { identifier }

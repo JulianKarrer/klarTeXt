@@ -31,7 +31,11 @@ static PRATT_PARSER: LazyLock<PrattParser<Rule>> = LazyLock::new(|| {
 #[grammar = "grammar.pest"] // relative to src
 struct TexParser;
 
-fn parse_expr(expression: Pairs<Rule>, span_arg: Option<SpanInfo>, src: &str) -> Result<Expr,Error> {
+fn parse_expr(
+    expression: Pairs<Rule>,
+    span_arg: Option<SpanInfo>,
+    src: &str,
+) -> Result<Expr, Error> {
     PRATT_PARSER
         .map_primary(|primary: Pair<'_, Rule>| {
             let span = if let Some(s) = span_arg {
@@ -41,14 +45,19 @@ fn parse_expr(expression: Pairs<Rule>, span_arg: Option<SpanInfo>, src: &str) ->
             };
             match primary.as_rule() {
                 // literals
-                Rule::real => Ok(Expr::Val(Val::Num(primary.as_str().parse::<f64>().unwrap()), span)),
-                Rule::integer => {
-                    Ok(Expr::Val(Val::Num(primary.as_str().parse::<f64>().unwrap()), span))
-                },
-                Rule::digit => {
-                    Ok(Expr::Val(Val::Num(primary.as_str().parse::<f64>().unwrap()), span))
-                }
-                Rule::infinity => Ok(Expr::Val(Val::Num(INFINITY), span)),
+                Rule::real => Ok(Expr::Const(
+                    Val::Num(primary.as_str().parse::<f64>().unwrap()),
+                    span,
+                )),
+                Rule::integer => Ok(Expr::Const(
+                    Val::Num(primary.as_str().parse::<f64>().unwrap()),
+                    span,
+                )),
+                Rule::digit => Ok(Expr::Const(
+                    Val::Num(primary.as_str().parse::<f64>().unwrap()),
+                    span,
+                )),
+                Rule::infinity => Ok(Expr::Const(Val::Num(INFINITY), span)),
                 // identifiers
                 Rule::identifier => Ok(Expr::Ident(primary.as_str().to_owned(), span)),
                 // {}-bracketed expressions
@@ -69,7 +78,30 @@ fn parse_expr(expression: Pairs<Rule>, span_arg: Option<SpanInfo>, src: &str) ->
                     let radicant = parse_expr(p.next().unwrap().into_inner(), None, src)?;
                     let deg_span = degree.span();
                     let rad_span = radicant.span();
-                    Ok(Expr::Root(Box::new(degree), Box::new(radicant), deg_span, rad_span))
+                    Ok(Expr::Root(
+                        Box::new(degree),
+                        Box::new(radicant),
+                        deg_span,
+                        rad_span,
+                    ))
+                }
+                Rule::integral => {
+                    let mut p = primary.clone().into_inner();
+                    let from = parse_expr(p.next().unwrap().into_inner(), None, src)?;
+                    let to = parse_expr(p.next().unwrap().into_inner(), None, src)?;
+                    let body = parse_expr(p.next().unwrap().into_inner(), None, src)?;
+                    let dx = p.next().unwrap().as_str().to_owned();
+                    if let Some(_) = p.next() {
+                        Err(Error::IntegralNot1D(span))
+                    } else {
+                        Ok(Expr::Int(
+                            Box::new(from),
+                            Box::new(to),
+                            dx,
+                            Box::new(body),
+                            span,
+                        ))
+                    }
                 }
                 Rule::fn_app => {
                     let mut p = primary.into_inner();
@@ -92,7 +124,7 @@ fn parse_expr(expression: Pairs<Rule>, span_arg: Option<SpanInfo>, src: &str) ->
                     } else {
                         span
                     }),
-                    src
+                    src,
                 ),
                 // recursive case
                 Rule::expr => parse_expr(
@@ -105,9 +137,12 @@ fn parse_expr(expression: Pairs<Rule>, span_arg: Option<SpanInfo>, src: &str) ->
                     } else {
                         span
                     }),
-                    src
+                    src,
                 ),
-                _ => {println!("{:?}", primary);unreachable!()},
+                _ => {
+                    println!("{:?}", primary);
+                    unreachable!()
+                }
             }
         })
         .map_prefix(|prefix, rhs| {
@@ -116,13 +151,13 @@ fn parse_expr(expression: Pairs<Rule>, span_arg: Option<SpanInfo>, src: &str) ->
             match prefix.as_rule() {
                 Rule::neg => Ok(Expr::Neg(Box::new(rhs), span)),
                 Rule::sum => {
-                    let (low,high,body_lam) = parse_reduction(prefix, rhs, src)?;
+                    let (low, high, body_lam) = parse_reduction(prefix, rhs, src)?;
                     Ok(Expr::Sum(low..=high, body_lam, span))
-                },
+                }
                 Rule::prod => {
-                    let (low,high,body_lam) = parse_reduction(prefix, rhs, src)?;
+                    let (low, high, body_lam) = parse_reduction(prefix, rhs, src)?;
                     Ok(Expr::Prod(low..=high, body_lam, span))
-                },
+                }
                 _ => unreachable!(),
             }
         })
@@ -151,19 +186,19 @@ fn parse_expr(expression: Pairs<Rule>, span_arg: Option<SpanInfo>, src: &str) ->
         .parse(expression)
 }
 
-fn reduction_expect_int(expr:&Expr)->Result<i64, Error>{
-    if let Expr::Val(Val::Num(x), _) = expr{
-        if (x - x.round()) < f64::EPSILON{
+fn reduction_expect_int(expr: &Expr) -> Result<i64, Error> {
+    if let Expr::Const(Val::Num(x), _) = expr {
+        if (x - x.round()) < f64::EPSILON {
             Ok(x.round() as i64)
         } else {
-            Err(Error::SumNonIntegerVar(expr.span()))
+            Err(Error::ReductionNonIntegerVar(expr.span()))
         }
     } else {
-        Err(Error::SumBodyNotNumeric(expr.span()))
+        Err(Error::ReductionBodyNotNumeric(expr.span()))
     }
 }
 
-fn parse_reduction(pair:Pair<'_, Rule>, rhs:Expr, src: &str)->Result<(i64, i64, Val), Error>{
+fn parse_reduction(pair: Pair<'_, Rule>, rhs: Expr, src: &str) -> Result<(i64, i64, Val), Error> {
     let mut sum = pair.into_inner();
     let sum_var = sum.next().unwrap().as_str().to_owned();
     let low_expr = parse_expr(sum.next().unwrap().into_inner(), None, src)?;
@@ -173,22 +208,12 @@ fn parse_reduction(pair:Pair<'_, Rule>, rhs:Expr, src: &str)->Result<(i64, i64, 
     let high = reduction_expect_int(&high_expr)?;
 
     let body_str = rhs.span().read_source(src);
-    let body = create_function(
-        sum.as_str().to_owned(), 
-        vec![sum_var], 
-        rhs, 
-        body_str
-    );
+    let body = create_function(sum.as_str().to_owned(), vec![sum_var], rhs, body_str);
 
-   Ok((low, high, body))
+    Ok((low, high, body))
 }
 
-fn create_function(
-    name:String, 
-    params:Vec<String>, 
-    body_expr:Expr, 
-    body_str:String,
-)->Val{
+fn create_function(name: String, params: Vec<String>, body_expr: Expr, body_str: String) -> Val {
     let names = names_in_expr(&body_expr);
     let param_count = params.len();
     Val::Lambda(
@@ -200,12 +225,7 @@ fn create_function(
             move |xs: Vec<Val>, env, span| {
                 if xs.len() != param_count {
                     // throw an error if the argument count is incorrect
-                    return Err(Error::FnArgCount(
-                        name.clone(),
-                        param_count,
-                        xs.len(),
-                        span,
-                    ));
+                    return Err(Error::FnArgCount(name.clone(), param_count, xs.len(), span));
                 } else {
                     // otherwise add arguments to the environment
                     let mut env_inner = env.clone(); // TODO: avoid clone
@@ -220,7 +240,11 @@ fn create_function(
     )
 }
 
-fn parse_stmt(stmt: Pair<'_, Rule>, output_counter: &mut i64, src: &str) -> Result<Option<Stmt>, Error> {
+fn parse_stmt(
+    stmt: Pair<'_, Rule>,
+    output_counter: &mut i64,
+    src: &str,
+) -> Result<Option<Stmt>, Error> {
     match stmt.as_rule() {
         Rule::expr_statement => Ok(None),
         Rule::print_statement => {
@@ -249,7 +273,7 @@ fn parse_stmt(stmt: Pair<'_, Rule>, output_counter: &mut i64, src: &str) -> Resu
             let body_expr = parse_expr(body, None, src)?;
             Ok(Some(Stmt::Definition(
                 func_name.clone(),
-                Expr::Val(
+                Expr::Const(
                     create_function(func_name, params, body_expr, body_str),
                     span,
                 ),
@@ -265,15 +289,15 @@ pub fn parse_main(src: &str) -> Result<Program, Error> {
     match <TexParser as pest::Parser<Rule>>::parse(Rule::main, src) {
         Ok(res) => {
             let mut prog = vec![];
-            for stmt in res{
+            for stmt in res {
                 match stmt.as_rule() {
-                    Rule::EOI => {},
+                    Rule::EOI => {}
                     Rule::statement => {
                         let pairs = stmt.into_inner().next().unwrap();
-                        if let Some(parsed) = parse_stmt(pairs, &mut output_counter, src)?{
+                        if let Some(parsed) = parse_stmt(pairs, &mut output_counter, src)? {
                             prog.push(parsed);
                         };
-                    },
+                    }
                     _ => {
                         println!("{:?}", stmt);
                         unreachable!()
@@ -281,7 +305,7 @@ pub fn parse_main(src: &str) -> Result<Program, Error> {
                 }
             }
             Ok(prog)
-        },
+        }
         Err(err) => Err(pest_err_adapter(err)),
     }
 }
