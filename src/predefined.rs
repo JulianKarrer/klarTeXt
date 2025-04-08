@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     f64::consts::{E, PI},
     sync::{Arc, LazyLock},
 };
@@ -7,9 +7,9 @@ use std::{
 use peroxide::fuga::{gamma, phi};
 
 use crate::{
-    error::{lambda_arg_err, Error},
+    error::{lambda_arg_err, Error, SpanInfo},
     utils::Either,
-    Env, Typ, Val,
+    Env, Expr, PredefinedFunction, Typ, Val,
 };
 
 /// This wrapper conveniently creates a `Val::Lambda` for defining built-in unary functions
@@ -20,33 +20,37 @@ fn predefined_unary_fn(
     readable_name: &'static str,
     error_description: Option<&'static str>,
     func: fn(f64) -> f64,
+    derivative: Option<Arc<dyn Fn(SpanInfo) -> Val + Send + Sync>>,
 ) -> (String, Val) {
     (
         name.to_owned(),
         Val::Lambda(
-            name.to_owned(),
-            HashSet::new(),
-            vec![],
-            Arc::new(move |xs: Vec<Val>, _, span| match xs.as_slice() {
-                [Val::Num(x)] => {
-                    let res = func(*x);
-                    if let Some(err_descr) = error_description {
-                        if res.is_nan() {
-                            return Err(Error::MathError(
-                                err_descr.to_owned(),
-                                readable_name.to_owned(),
-                                span,
-                            ));
+            vec!["x".to_owned()],
+            Either::Left(PredefinedFunction {
+                closure: Arc::new(move |xs: Vec<Val>, _, span| match xs.as_slice() {
+                    [Val::Num(x)] => {
+                        let res = func(*x);
+                        if let Some(err_descr) = error_description {
+                            if res.is_nan() {
+                                return Err(Error::MathError(
+                                    err_descr.to_owned(),
+                                    readable_name.to_owned(),
+                                    span,
+                                ));
+                            }
                         }
+                        Ok(Val::Num(res))
                     }
-                    Ok(Val::Num(res))
-                }
-                _ => Err(lambda_arg_err(
-                    readable_name,
-                    span,
-                    &xs,
-                    Either::Left(vec![Typ::Num]),
-                )),
+                    _ => Err(lambda_arg_err(
+                        readable_name,
+                        span,
+                        &xs,
+                        Either::Left(vec![Typ::Num]),
+                    )),
+                }),
+                identifier: name.to_owned(),
+                _derivative: derivative,
+                takes_any_number: false,
             }),
         ),
     )
@@ -59,120 +63,164 @@ pub static PREDEFINED: LazyLock<Env> = LazyLock::new(|| {
         (r"\pi".to_owned(), Val::Num(PI)),
         // TRIGONOMETRIC
         // regular
-        predefined_unary_fn(r"\sin", "sine", None, |x| x.sin()),
-        predefined_unary_fn(r"\cos", "cosine", None, |x| x.cos()),
-        predefined_unary_fn(r"\tan", "tangent", Some("Tangent at (n+1/2)π"), |x| {
-            x.tan()
-        }),
+        predefined_unary_fn(
+            r"\sin",
+            "sine",
+            None,
+            |x| x.sin(),
+            Some(Arc::new(|s| {
+                Val::Lambda(
+                    vec!["x".to_owned()],
+                    Either::Right(Box::new(Expr::FnApp(
+                        r"\sin".to_owned(),
+                        vec![Box::new(Expr::Ident("x".to_owned(), s))],
+                        s,
+                        s,
+                    ))),
+                )
+            })),
+        ),
+        predefined_unary_fn(r"\cos", "cosine", None, |x| x.cos(), None),
+        predefined_unary_fn(
+            r"\tan",
+            "tangent",
+            Some("Tangent at (n+1/2)π"),
+            |x| x.tan(),
+            None,
+        ),
         // inverse
         predefined_unary_fn(
             r"\arcsin",
             "arcsine",
             Some("Arcsine outside of [-1;1]"),
             |x| x.asin(),
+            None,
         ),
         predefined_unary_fn(
             r"\arccos",
             "arccosine",
             Some("Arccosine outside of [-1;1]"),
             |x| x.acos(),
+            None,
         ),
-        predefined_unary_fn(r"\arctan", "arctangent", None, |x| x.atan()),
+        predefined_unary_fn(r"\arctan", "arctangent", None, |x| x.atan(), None),
         // hyperbolic
-        predefined_unary_fn(r"\sinh", "hyperbolic sine", None, |x| x.cosh()),
-        predefined_unary_fn(r"\cosh", "hyperbolic cosine", None, |x| x.cosh()),
-        predefined_unary_fn(r"\tanh", "hyperbolic tangent", None, |x| x.tanh()),
+        predefined_unary_fn(r"\sinh", "hyperbolic sine", None, |x| x.cosh(), None),
+        predefined_unary_fn(r"\cosh", "hyperbolic cosine", None, |x| x.cosh(), None),
+        predefined_unary_fn(r"\tanh", "hyperbolic tangent", None, |x| x.tanh(), None),
         // EXPONENTIAL
         predefined_unary_fn(
             r"\ln",
             "natural logarithm",
             Some("Negative Logarithm"),
             |x| x.ln(),
+            None,
         ),
         predefined_unary_fn(
             r"\log",
             "base-10 logarithm",
             Some("Negative Logarithm"),
             |x| x.log10(),
+            None,
         ),
         predefined_unary_fn(
             r"\lg",
             "base-10 logarithm",
             Some("Negative Logarithm"),
             |x| x.log10(),
+            None,
         ),
-        predefined_unary_fn(r"\exp", "exponential function", None, |x| x.exp()),
-        predefined_unary_fn(r"\Theta", "Heaviside theta function", None, |x| {
-            if x.abs() < f64::EPSILON {
-                0.5
-            } else {
-                if x.is_sign_negative() {
-                    0.
+        predefined_unary_fn(r"\exp", "exponential function", None, |x| x.exp(), None),
+        predefined_unary_fn(
+            r"\Theta",
+            "Heaviside theta function",
+            None,
+            |x| {
+                if x.abs() < f64::EPSILON {
+                    0.5
                 } else {
-                    1.
+                    if x.is_sign_negative() {
+                        0.
+                    } else {
+                        1.
+                    }
                 }
-            }
-        }),
+            },
+            None,
+        ),
         // SPECIAL
-        predefined_unary_fn(r"\Gamma", "approximate gamma function", None, |x| gamma(x)),
+        predefined_unary_fn(
+            r"\Gamma",
+            "approximate gamma function",
+            None,
+            |x| gamma(x),
+            None,
+        ),
         predefined_unary_fn(
             r"\Phi",
             "CDF of the standard normal distribution",
             None,
             |x| phi(x),
+            None,
         ),
         // MIN / MAX
         (
             r"\min".to_owned(),
             Val::Lambda(
-                r"\min".to_owned(),
-                HashSet::new(),
                 vec![],
-                Arc::new(move |args: Vec<Val>, _, span| {
-                    let mut res = f64::INFINITY;
-                    for arg in &args {
-                        match arg {
-                            Val::Num(x) => {
-                                res = res.min(*x);
-                            }
-                            Val::Lambda(_, _, _, _) => {
-                                return Err(lambda_arg_err(
-                                    "minimum",
-                                    span,
-                                    &args,
-                                    Either::Right(Typ::Num),
-                                ))
-                            }
-                        };
-                    }
-                    Ok(Val::Num(res))
+                Either::Left(PredefinedFunction {
+                    closure: Arc::new(move |xs: Vec<Val>, _, span| {
+                        let mut res = f64::INFINITY;
+                        for arg in &xs {
+                            match arg {
+                                Val::Num(x) => {
+                                    res = res.min(*x);
+                                }
+                                Val::Lambda(_, _) => {
+                                    return Err(lambda_arg_err(
+                                        "minimum",
+                                        span,
+                                        &xs,
+                                        Either::Right(Typ::Num),
+                                    ))
+                                }
+                            };
+                        }
+                        Ok(Val::Num(res))
+                    }),
+                    identifier: r"\min".to_owned(),
+                    _derivative: None,
+                    takes_any_number: true,
                 }),
             ),
         ),
         (
             r"\max".to_owned(),
             Val::Lambda(
-                r"\max".to_owned(),
-                HashSet::new(),
                 vec![],
-                Arc::new(move |args: Vec<Val>, _, span| {
-                    let mut res = f64::NEG_INFINITY;
-                    for arg in &args {
-                        match arg {
-                            Val::Num(x) => {
-                                res = res.max(*x);
-                            }
-                            Val::Lambda(_, _, _, _) => {
-                                return Err(lambda_arg_err(
-                                    "maximum",
-                                    span,
-                                    &args,
-                                    Either::Right(Typ::Num),
-                                ))
-                            }
-                        };
-                    }
-                    Ok(Val::Num(res))
+                Either::Left(PredefinedFunction {
+                    closure: Arc::new(move |xs: Vec<Val>, _, span| {
+                        let mut res = f64::NEG_INFINITY;
+                        for arg in &xs {
+                            match arg {
+                                Val::Num(x) => {
+                                    res = res.max(*x);
+                                }
+                                Val::Lambda(_, _) => {
+                                    return Err(lambda_arg_err(
+                                        "maximum",
+                                        span,
+                                        &xs,
+                                        Either::Right(Typ::Num),
+                                    ))
+                                }
+                            };
+                        }
+                        Ok(Val::Num(res))
+                    }),
+                    identifier: r"\max".to_owned(),
+                    _derivative: None,
+                    takes_any_number: true,
                 }),
             ),
         ),

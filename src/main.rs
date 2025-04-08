@@ -1,18 +1,22 @@
+use disambiguate_fnapp::disambiguate;
 use error::{handle_errs, span_merge, Error, SpanInfo};
 use io::{delete_matching_files, get_file_name, write_to_sibling_file};
+use itertools::Itertools;
 use parse::parse_main;
 use peroxide::fuga::integrate;
 use predefined::PREDEFINED;
 use resolve_def::resolve_const_definitions;
+use utils::Either;
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     f64::{self, INFINITY, NEG_INFINITY},
     fmt::{Debug, Display},
     fs,
     ops::RangeInclusive,
     sync::Arc,
 };
+mod disambiguate_fnapp;
 mod error;
 mod io;
 mod parse;
@@ -30,46 +34,151 @@ enum Stmt {
 }
 
 #[derive(Debug, Clone)]
+/// An expression.
+///
+/// This is the main AST object of the implementation that results from parsing
+/// and evaluates to a [`Val`] during interpretation.
 enum Expr {
+    /// a constant value
     Const(Val, SpanInfo),
+    /// an identifier
     Ident(String, SpanInfo),
-
+    /// function application, like f(x), defined by
+    /// - the function name (e.g. f)
+    /// - the list of argument expressions
+    /// - the span of the function name
+    /// - the span of the arguments
+    ///
+    /// ATTENTION
+    /// This could also represent an implicit multiplication since e.g. f(x+2)
+    /// is ambigous until the type of f (number or function?) is known.
+    /// [`Expr::FnApp`] might be interpreted as IMul in eval, since the input grammar is
+    /// context free but this problem is context sensitive.
+    /// This ambiguity is resolved in the [`disambiguate`] pass.
     FnApp(String, Vec<Box<Expr>>, SpanInfo, SpanInfo),
 
+    /// the square root of a number
     Sqrt(Box<Expr>, SpanInfo),
+    /// the general n-th root of a number, where n need not be an integer defined by:
+    /// - the expression that evaluates to the degree
+    /// - the expression that evaluates to the radicant
+    /// - the span of the degree expression
+    /// - the span of the radicant expression
+    /// this defines the x-th root of y as y^(1/x), throwing an error for the zero-th root
     Root(Box<Expr>, Box<Expr>, SpanInfo, SpanInfo),
+    /// unary, prefix negation of an expression
     Neg(Box<Expr>, SpanInfo),
+    /// unary, postifx factorial of an integer expression.
+    /// for non-integers, a gamma function is appropriate and an error is thrown
     Fac(Box<Expr>, SpanInfo),
 
+    /// addition of two expressions
     Add(Box<Expr>, Box<Expr>, SpanInfo),
+    /// subtraction of two expressions
     Sub(Box<Expr>, Box<Expr>, SpanInfo),
+    /// addition of two expressions
     Mul(Box<Expr>, Box<Expr>, SpanInfo),
+    /// implicit multiplication of two expressions
+    /// without a multiplication symbol (e.g. 2x, not 2\cdot x)
     IMul(Box<Expr>, Box<Expr>, SpanInfo),
+    /// divison of two expressions, can throw an error for x/0
     Div(Box<Expr>, Box<Expr>, SpanInfo),
+    /// exponentiation of two expressions
+    /// can throw an error for x<0, 0<=y<1, x^{1/y} -> complex results
     Pow(Box<Expr>, Box<Expr>, SpanInfo),
 
-    Sum(RangeInclusive<i64>, Val, SpanInfo),
-    Prod(RangeInclusive<i64>, Val, SpanInfo),
+    /// sigma-symbol sum, i.e.
+    /// - an expression body
+    /// - a loop variable closing that expression
+    /// - a range of integer values for the loop variable to take on
+    Sum(Box<Expr>, String, RangeInclusive<i64>, SpanInfo),
 
+    /// pi-symbol product, i.e.
+    /// - an expression body
+    /// - a loop variable closing that expression
+    /// - a range of integer values for the loop variable to take on
+    Prod(Box<Expr>, String, RangeInclusive<i64>, SpanInfo),
+
+    /// numeric integration of a R (\times R)* -> R function, i.e.
+    /// - an expression for the lower limit of the integration variable
+    /// - an expression for the upper limit of the integration variable
+    /// - the name of the single integration variable
+    /// - the body expression that is closed by the integration variable
+    ///
+    /// Uses G7K15 quadrature with 1e-4 relative error at 20 points.
+    /// Multidimensional integration is possible by nesting this construct.
     Int(Box<Expr>, Box<Expr>, String, Box<Expr>, SpanInfo),
 }
 
+impl Display for Expr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Expr::Const(val, _) => write!(f, "{}", val),
+            Expr::Ident(name, _) => write!(f, "{}", name),
+            Expr::FnApp(func_name, args, _, _) => {
+                let args_str: String = args.iter().map(|expr| format!("{}", expr)).join(", ");
+                write!(f, r"{}\left({}\right)", func_name, args_str)
+            }
+            Expr::Sqrt(expr, _) => write!(f, r"\sqrt{{ {} }}", expr),
+            Expr::Root(degree, radicant, _, _) => write!(f, r"\sqrt[{}]{{ {} }}", degree, radicant),
+            Expr::Neg(expr, _) => write!(f, r"\left(-{}\right)", expr),
+            Expr::Fac(expr, _) => write!(f, r"\left({}!\right)", expr),
+            Expr::Add(expr, expr1, _) => write!(f, r"\left({} + {}\right)", expr, expr1),
+            Expr::Sub(expr, expr1, _) => write!(f, r"\left({} - {}\right)", expr, expr1),
+            Expr::Mul(expr, expr1, _) => write!(f, r"\left({} \cdot {}\right)", expr, expr1),
+            Expr::IMul(expr, expr1, _) => write!(f, r"\left({} {}\right)", expr, expr1),
+            Expr::Div(expr, expr1, _) => write!(f, r"\frac{{ {} }}{{ {} }}", expr, expr1),
+            Expr::Pow(expr, expr1, _) => write!(f, r"{}^{{ {} }}", expr, expr1),
+            Expr::Sum(expr, loop_var, range, _) => write!(
+                f,
+                r"\sum_{{ {} = {} }}^{{ {} }}\left({}\right)",
+                loop_var,
+                range.start(),
+                range.end(),
+                expr
+            ),
+            Expr::Prod(expr, loop_var, range, _) => write!(
+                f,
+                r"\prod_{{ {} = {} }}^{{ {} }}\left({}\right)",
+                loop_var,
+                range.start(),
+                range.end(),
+                expr
+            ),
+            Expr::Int(lower, upper, int_var, body, _) => write!(
+                f,
+                r"\int_{{ {} }}^{{ {} }}\left({}\right)\,d{}",
+                lower, upper, body, int_var
+            ),
+        }
+    }
+}
+
 #[derive(Clone)]
-pub enum Val {
+struct PredefinedFunction {
+    closure: Arc<dyn Fn(Vec<Val>, &Env, SpanInfo) -> Result<Val, Error> + Send + Sync>,
+    identifier: String,
+    takes_any_number: bool,
+    _derivative: Option<Arc<dyn Fn(SpanInfo) -> Val + Send + Sync>>,
+}
+impl Display for PredefinedFunction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.identifier)
+    }
+}
+
+#[derive(Clone)]
+/// The value that an expression evaluates to.
+enum Val {
     /// numeric value represented as `f64`
     Num(f64),
     /// Lambda containing:
-    /// - the function name
-    /// - the set of identifiers it depends on
     /// - parameter names (empty vector if it is a predefined function)
-    /// - the actual function as a closure
+    /// - either:
+    ///   - the body of the function
+    ///   - or a closure representing a predefined function as well as its name
     /// A negative argument count allows any number of arguments
-    Lambda(
-        String,
-        HashSet<String>,
-        Vec<String>,
-        Arc<dyn Fn(Vec<Val>, &Env, SpanInfo) -> Result<Val, Error> + Send + Sync>,
-    ),
+    Lambda(Vec<String>, Either<PredefinedFunction, Box<Expr>>),
 }
 
 enum Typ {
@@ -80,7 +189,7 @@ impl Into<Typ> for Val {
     fn into(self) -> Typ {
         match self {
             Val::Num(_) => Typ::Num,
-            Val::Lambda(_, _, _, _) => Typ::Lam,
+            Val::Lambda(_, _) => Typ::Lam,
         }
     }
 }
@@ -88,7 +197,7 @@ impl Into<Typ> for &Val {
     fn into(self) -> Typ {
         match self {
             Val::Num(_) => Typ::Num,
-            Val::Lambda(_, _, _, _) => Typ::Lam,
+            Val::Lambda(_, _) => Typ::Lam,
         }
     }
 }
@@ -106,7 +215,11 @@ impl Display for Val {
             Val::Num(INFINITY) => write!(f, r"\infty"),
             Val::Num(NEG_INFINITY) => write!(f, r"-\infty"),
             Val::Num(x) => write!(f, "{}", snap_to_int(*x)),
-            Val::Lambda(name, _, params, _) => {
+            Val::Lambda(params, func) => {
+                let name = match func {
+                    Either::Left(predef) => format!("{}", predef),
+                    Either::Right(expr) => format!("{}", expr),
+                };
                 if params.is_empty() {
                     write!(f, "{}", name)
                 } else {
@@ -124,8 +237,8 @@ impl Debug for Val {
 
 /// Multiplication that defines zero to be the absorbing element even if the respective other argument is undefined. This allows expressions like `0 + \frac{5}{0}` to evaluate to `0`.
 fn custom_mul(lhs: &Expr, rhs: &Expr, env: &Env) -> Result<f64, Error> {
-    let lhs_res = eval_num(lhs, env);
-    let rhs_res = eval_num(rhs, env);
+    let lhs_res = eval_num(lhs, env, None);
+    let rhs_res = eval_num(rhs, env, None);
     // if any of the two arguments is close enough to zero, return it
     // therefore, the other value may be undefined!
     if let Ok(vl) = lhs_res {
@@ -143,12 +256,19 @@ fn custom_mul(lhs: &Expr, rhs: &Expr, env: &Env) -> Result<f64, Error> {
 }
 
 /// A version of [`eval_expr`] that guarantees the returned value to be a f64 number or an error.
-fn eval_num(expr: &Expr, env: &Env) -> Result<f64, Error> {
+/// An error to throw instead of the generic type error can be supplied.
+fn eval_num(expr: &Expr, env: &Env, err: Option<Error>) -> Result<f64, Error> {
     let span = expr.span();
     let res = eval_expr(expr, env)?;
     match res {
         Val::Num(x) => Ok(x),
-        Val::Lambda(_, _, _, _) => Err(Error::TypeError(Typ::Num.name(), Typ::Lam.name(), span)),
+        Val::Lambda(_, _) => {
+            if let Some(err) = err {
+                Err(err)
+            } else {
+                Err(Error::TypeError(Typ::Num.name(), Typ::Lam.name(), span))
+            }
+        }
     }
 }
 
@@ -177,48 +297,60 @@ fn eval_expr(expr: &Expr, env: &Env) -> Result<Val, Error> {
     let span = expr.span();
     match expr {
         Expr::Ident(name, _) => lookup_env(name, env, span),
-        Expr::FnApp(func_name, args, name_span, _) => {
+        Expr::FnApp(func_name, args, _, _) => {
             // check if the function name is in the environment
             // if so, get the corresponding value
             let func_val = lookup_env(func_name, env, span)?;
-
-            match func_val {
-                // check if this is ACTUALLY an implicit multiplication
-                // - if fn_name is actually a numeric type
-                // - AND there is a single argument
-                // then interpret this as an implicit multiplication
-                Val::Num(x) => match &args[..] {
-                    [arg] => {
-                        return eval_expr(
-                            &Expr::IMul(
-                                Box::new(Expr::Const(Val::Num(x), *name_span)),
-                                arg.clone(),
-                                span,
-                            ),
-                            env,
-                        )
-                    }
-                    _ => Err(Error::TypeError(Typ::Lam.name(), Typ::Num.name(), span)),
-                },
+            match &func_val {
+                Val::Num(_) => Err(Error::TypeError(Typ::Lam.name(), Typ::Num.name(), span)),
                 // otherwise, there is a function value to work with
-                Val::Lambda(_, _, _, func) => {
+                Val::Lambda(params, func) => {
                     // evaluate the arguments
                     let arg_vals = args
                         .iter()
                         .map(|arg| eval_expr(arg, env))
                         .collect::<Result<Vec<Val>, Error>>()?;
-                    // call the function
-                    func(arg_vals, env, span)
+                    // if the number of arguments doesn't match the parameters, throw an error
+                    if arg_vals.len() != params.len() {
+                        if let Either::Left(PredefinedFunction {
+                            takes_any_number: true,
+                            ..
+                        }) = func
+                        {
+                            // there are predefined functions that are overloaded for any number of arguments
+                            // in this case, do nothing
+                        } else {
+                            // otherwise, return the error
+                            return Err(Error::FnArgCount(
+                                format!("{}", func_val),
+                                params.len(),
+                                arg_vals.len(),
+                                span,
+                            ));
+                        }
+                    }
+                    match func {
+                        Either::Left(predefined) => (predefined.closure)(arg_vals, env, span),
+                        Either::Right(body) => {
+                            // there is a user-defined function
+                            // add arguments to the environment and then evaluate the body
+                            let mut env_inner = env.clone();
+                            for (param, arg) in params.iter().zip(arg_vals) {
+                                env_inner.insert(param.to_owned(), arg);
+                            }
+                            eval_expr(&body, &env_inner)
+                        }
+                    }
                 }
             }
         }
         Expr::Const(val, _) => match val {
             Val::Num(x) => Ok(Val::Num(*x)),
-            Val::Lambda(_, _, _, _) => Ok(val.clone()),
+            Val::Lambda(_, _) => Ok(val.clone()),
         },
-        Expr::Neg(x, _) => Ok(Val::Num(-eval_num(x, env)?)),
+        Expr::Neg(x, _) => Ok(Val::Num(-eval_num(x, env, None)?)),
         Expr::Fac(x, span) => {
-            let val = eval_num(x, env)?;
+            let val = eval_num(x, env, None)?;
             let val_int = val.round() as u64;
             if val < 0. {
                 Err(Error::FactorialNeg(*span))
@@ -228,8 +360,12 @@ fn eval_expr(expr: &Expr, env: &Env) -> Result<Val, Error> {
                 Ok(Val::Num((1..=val_int).map(|x| x as f64).product()))
             }
         }
-        Expr::Add(lhs, rhs, _) => Ok(Val::Num(eval_num(lhs, env)? + eval_num(rhs, env)?)),
-        Expr::Sub(lhs, rhs, _) => Ok(Val::Num(eval_num(lhs, env)? - eval_num(rhs, env)?)),
+        Expr::Add(lhs, rhs, _) => Ok(Val::Num(
+            eval_num(lhs, env, None)? + eval_num(rhs, env, None)?,
+        )),
+        Expr::Sub(lhs, rhs, _) => Ok(Val::Num(
+            eval_num(lhs, env, None)? - eval_num(rhs, env, None)?,
+        )),
         Expr::IMul(lhs, rhs, _) => {
             // check if two numbers are implicitly multiplied
             match **rhs {
@@ -246,8 +382,8 @@ fn eval_expr(expr: &Expr, env: &Env) -> Result<Val, Error> {
         }
         Expr::Mul(lhs, rhs, _) => Ok(Val::Num(custom_mul(lhs, rhs, env)?)),
         Expr::Div(lhs, rhs, _) => {
-            let lhs = eval_num(lhs, env)?;
-            let rhs = eval_num(rhs, env)?;
+            let lhs = eval_num(lhs, env, None)?;
+            let rhs = eval_num(rhs, env, None)?;
             let res = lhs / rhs;
             if !res.is_nan() {
                 Ok(Val::Num(res))
@@ -264,7 +400,7 @@ fn eval_expr(expr: &Expr, env: &Env) -> Result<Val, Error> {
             }
         }
         Expr::Pow(lhs, rhs, _) => {
-            let res = eval_num(lhs, env)?.powf(eval_num(rhs, env)?);
+            let res = eval_num(lhs, env, None)?.powf(eval_num(rhs, env, None)?);
             if !res.is_nan() {
                 Ok(Val::Num(res))
             } else {
@@ -272,7 +408,7 @@ fn eval_expr(expr: &Expr, env: &Env) -> Result<Val, Error> {
             }
         }
         Expr::Sqrt(expr, _) => {
-            let res = eval_num(expr, env)?.sqrt();
+            let res = eval_num(expr, env, None)?.sqrt();
             if !res.is_nan() {
                 Ok(Val::Num(res))
             } else {
@@ -280,12 +416,12 @@ fn eval_expr(expr: &Expr, env: &Env) -> Result<Val, Error> {
             }
         }
         Expr::Root(degree, radicant, degree_span, radicant_span) => {
-            let degree = eval_num(degree, env)?;
+            let degree = eval_num(degree, env, None)?;
             if degree.abs() < f64::EPSILON {
                 // Check for zero-th root
                 Err(Error::ZerothRoot(*degree_span))
             } else {
-                let res = eval_num(radicant, env)?.powf(1.0 / degree);
+                let res = eval_num(radicant, env, None)?.powf(1.0 / degree);
                 if !res.is_nan() {
                     Ok(Val::Num(res))
                 } else {
@@ -293,15 +429,19 @@ fn eval_expr(expr: &Expr, env: &Env) -> Result<Val, Error> {
                 }
             }
         }
-        Expr::Sum(range, val, _) => eval_reduction(env, range, val, span, |a, b| a + b, 0.),
-        Expr::Prod(range, val, _) => eval_reduction(env, range, val, span, |a, b| a * b, 1.),
+        Expr::Sum(body, loop_var, range, _) => {
+            eval_reduction(body, loop_var, env, range, span, |a, b| a + b, 0.)
+        }
+        Expr::Prod(body, loop_var, range, _) => {
+            eval_reduction(body, loop_var, env, range, span, |a, b| a * b, 1.)
+        }
         Expr::Int(from, to, dx, body, _) => {
-            let from = eval_num(from, env)?;
-            let to = eval_num(to, env)?;
+            let from = eval_num(from, env, None)?;
+            let to = eval_num(to, env, None)?;
             let func = move |x: f64| {
                 let mut env_inner = env.clone();
                 env_inner.insert(dx.to_owned(), Val::Num(x));
-                eval_num(&body, &env_inner).unwrap_or(f64::NAN)
+                eval_num(&body, &env_inner, None).unwrap_or(f64::NAN)
             };
             let res = integrate(func, (from, to), peroxide::fuga::Integral::G7K15(1e-4, 20));
             if res.is_nan() {
@@ -314,27 +454,23 @@ fn eval_expr(expr: &Expr, env: &Env) -> Result<Val, Error> {
 }
 
 fn eval_reduction<R: Fn(f64, f64) -> f64>(
+    body: &Expr,
+    loop_var: &String,
     env: &Env,
     range: &RangeInclusive<i64>,
-    val: &Val,
     span: SpanInfo,
     reduction_op: R,
     neutral_element: f64,
 ) -> Result<Val, Error> {
-    match val {
-        Val::Num(_) => unreachable!(),
-        Val::Lambda(_, _, _, func) => {
-            let mut res = neutral_element;
-            for i in range.clone() {
-                let ith_val = func(vec![Val::Num(i as f64)], env, span)?;
-                match ith_val {
-                    Val::Num(ith_f64) => res = reduction_op(res, ith_f64),
-                    _ => return Err(Error::ReductionBodyNotNumeric(span)),
-                }
-            }
-            Ok(Val::Num(res))
-        }
+    let mut res = neutral_element;
+    let mut env_inner = env.clone();
+    for i in range.clone() {
+        // update the loop variable
+        env_inner.insert(loop_var.to_owned(), Val::Num(i as f64));
+        let update = eval_num(body, &env_inner, Some(Error::ReductionBodyNotNumeric(span)))?;
+        res = reduction_op(res, update);
     }
+    Ok(Val::Num(res))
 }
 
 fn snap_to_int(val: f64) -> f64 {
@@ -435,17 +571,21 @@ pub fn main() {
         &err_wrn_file_name,
     );
 
+    // PASS 2 - DISAMBIGUATING FUNCTION APPLICATION AND IMPLICIT MULTIPLICATION
+    // e.g. f(x+2) could be read as f*(x+2), if f is a number
+    let p2 = handle_errs(disambiguate(p1, &env), &src, &filename, &err_wrn_file_name);
+
     // Run the program by interpreting the AST directly.
     // - `debug_run` writes to `stdout`
     // - `run` writes output files in the directory of the source code file
     if let Some((err_file_name, _)) = &err_wrn_file_name {
         handle_errs(
-            run(p1, env, &filename, err_file_name),
+            run(p2, env, &filename, err_file_name),
             &src,
             &filename,
             &err_wrn_file_name,
         );
     } else {
-        handle_errs(debug_run(p1, env), &src, &filename, &None);
+        handle_errs(debug_run(p2, env), &src, &filename, &None);
     }
 }

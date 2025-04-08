@@ -2,35 +2,49 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::{
     error::{Error, Warning, WARNINGS},
-    eval_expr, Env, Expr, Program, Stmt, Val, PREDEFINED,
+    eval_expr,
+    utils::Either,
+    Env, Expr, Program, Stmt, Val, PREDEFINED,
 };
 
-pub fn names_in_expr(expr: &Expr) -> HashSet<String> {
+pub fn free_in_expr(expr: &Expr) -> HashSet<String> {
     match expr {
         Expr::Const(val, _) => match val {
             Val::Num(_) => HashSet::new(),
-            Val::Lambda(_, depends_on, _, _) => depends_on.clone(),
+            Val::Lambda(_, Either::Left(predefined)) => {
+                // predefined function don't depend on anything but their arguments
+                HashSet::from([predefined.identifier.to_owned()])
+            }
+            Val::Lambda(params, Either::Right(body)) => {
+                let mut inner = free_in_expr(&body);
+                // remove names bound by parameters from the free variables
+                for param in params {
+                    inner.remove(param);
+                }
+                inner
+            }
         },
-        Expr::Sum(_, val, _) | Expr::Prod(_, val, _) => match val {
-            Val::Num(_) => unreachable!(),
-            Val::Lambda(_, depends_on, _, _) => depends_on.clone(),
-        },
+        Expr::Sum(body, loop_var, _, _) | Expr::Prod(body, loop_var, _, _) => {
+            let mut inner = free_in_expr(&body);
+            inner.remove(loop_var);
+            inner
+        }
         Expr::Ident(name, _) => HashSet::from([name.to_owned()]),
         Expr::Neg(expr, _)
         | Expr::Fac(expr, _)
         | Expr::Sqrt(expr, _)
-        | Expr::Root(_, expr, _, _) => names_in_expr(expr),
+        | Expr::Root(_, expr, _, _) => free_in_expr(expr),
         Expr::Add(expr1, expr2, _)
         | Expr::Sub(expr1, expr2, _)
         | Expr::Mul(expr1, expr2, _)
         | Expr::IMul(expr1, expr2, _)
         | Expr::Div(expr1, expr2, _)
-        | Expr::Pow(expr1, expr2, _) => &names_in_expr(expr1) | &names_in_expr(&expr2),
+        | Expr::Pow(expr1, expr2, _) => &free_in_expr(expr1) | &free_in_expr(&expr2),
         Expr::FnApp(name, exprs, _, _) => {
             // collect names in argument expressions
             let args_names = exprs
                 .iter()
-                .map(|expr| names_in_expr(&expr))
+                .map(|expr| free_in_expr(&expr))
                 .reduce(|acc: HashSet<String>, e: HashSet<String>| &acc | &e)
                 .unwrap();
             // combine with names in function expression
@@ -38,8 +52,8 @@ pub fn names_in_expr(expr: &Expr) -> HashSet<String> {
         }
         Expr::Int(expr, expr1, dx, expr2, _) => {
             let mut inner: HashSet<String> = Into::<HashSet<String>>::into(
-                &Into::<HashSet<String>>::into(&names_in_expr(expr) | &names_in_expr(expr1))
-                    | &names_in_expr(&expr2),
+                &Into::<HashSet<String>>::into(&free_in_expr(expr) | &free_in_expr(expr1))
+                    | &free_in_expr(&expr2),
             );
             inner.remove(dx);
             inner
@@ -131,7 +145,7 @@ pub fn resolve_const_definitions(prog: Program) -> Result<(Program, Env), Error>
     for stmt in prog {
         match stmt {
             Stmt::Definition(name, expr, span) => {
-                if let Some(_) = graph.insert(name.to_owned(), names_in_expr(&expr)) {
+                if let Some(_) = graph.insert(name.to_owned(), free_in_expr(&expr)) {
                     WARNINGS
                         .lock()
                         .unwrap()
@@ -150,12 +164,8 @@ pub fn resolve_const_definitions(prog: Program) -> Result<(Program, Env), Error>
     let nodes = topological_sort(&graph, &definitions)?;
 
     // resolve dependencies in topological order
-    for name in nodes
-        .iter()
-        // filter out predefined constants
-        .filter(|n| !PREDEFINED.contains_key(*n))
-    {
-        if let Some(expr) = definitions.get(name) {
+    for name in nodes {
+        if let Some(expr) = definitions.get(&name) {
             // evaluate the expression:
             // this must be possible, since definitions are now topologically ordered
             let res = eval_expr(expr, &env)?;

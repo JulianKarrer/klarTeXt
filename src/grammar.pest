@@ -20,7 +20,7 @@
     "\\end{program}"
   }
 
-  statement = { fn_definition |definition | print_statement | expr_statement }
+  statement = { fn_definition | definition | print_statement | expr_statement }
   expr_statement = { expr }
   print_statement = {"\\print{" ~ expr ~ "}"}
   definition = { identifier ~ "=" ~ expr }
@@ -97,7 +97,7 @@
   keyword = { 
     "\\left" | "\\right" | "\\cdot" | "\\frac" | "\\sfrac" 
   | "\\sqrt"| "\\infty" | "\\sum" | "\\prod" | "\\begin" | "\\end" 
-  | "\\int"
+  | "\\int" | "\\print"
   }
   identifier = @{ (!keyword ~ (simple_identifier | latex_symbol)) ~ subscript? }
   simple_identifier = _{ ASCII_ALPHA | ("\\text" ~ "{"~ nested_block ~"}") }

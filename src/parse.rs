@@ -1,7 +1,4 @@
-use std::{
-    f64::INFINITY,
-    sync::{Arc, LazyLock},
-};
+use std::{f64::INFINITY, sync::LazyLock};
 
 use pest::{
     iterators::{Pair, Pairs},
@@ -10,8 +7,7 @@ use pest::{
 
 use crate::{
     error::{pest_err_adapter, span_merge, Error, SpanInfo},
-    eval_expr,
-    resolve_def::names_in_expr,
+    utils::Either,
     Expr, Program, Stmt, Val,
 };
 
@@ -151,12 +147,12 @@ fn parse_expr(
             match prefix.as_rule() {
                 Rule::neg => Ok(Expr::Neg(Box::new(rhs), span)),
                 Rule::sum => {
-                    let (low, high, body_lam) = parse_reduction(prefix, rhs, src)?;
-                    Ok(Expr::Sum(low..=high, body_lam, span))
+                    let (low, high, loop_var) = parse_reduction(prefix, src)?;
+                    Ok(Expr::Sum(Box::new(rhs), loop_var, low..=high, span))
                 }
                 Rule::prod => {
-                    let (low, high, body_lam) = parse_reduction(prefix, rhs, src)?;
-                    Ok(Expr::Prod(low..=high, body_lam, span))
+                    let (low, high, loop_var) = parse_reduction(prefix, src)?;
+                    Ok(Expr::Prod(Box::new(rhs), loop_var, low..=high, span))
                 }
                 _ => unreachable!(),
             }
@@ -186,58 +182,28 @@ fn parse_expr(
         .parse(expression)
 }
 
-fn reduction_expect_int(expr: &Expr) -> Result<i64, Error> {
-    if let Expr::Const(Val::Num(x), _) = expr {
-        if (x - x.round()) < f64::EPSILON {
-            Ok(x.round() as i64)
+fn parse_reduction(pair: Pair<'_, Rule>, src: &str) -> Result<(i64, i64, String), Error> {
+    fn reduction_expect_int(expr: &Expr) -> Result<i64, Error> {
+        if let Expr::Const(Val::Num(x), _) = expr {
+            if (x - x.round()) < f64::EPSILON {
+                Ok(x.round() as i64)
+            } else {
+                Err(Error::ReductionNonIntegerVar(expr.span()))
+            }
         } else {
-            Err(Error::ReductionNonIntegerVar(expr.span()))
+            Err(Error::ReductionBodyNotNumeric(expr.span()))
         }
-    } else {
-        Err(Error::ReductionBodyNotNumeric(expr.span()))
     }
-}
 
-fn parse_reduction(pair: Pair<'_, Rule>, rhs: Expr, src: &str) -> Result<(i64, i64, Val), Error> {
     let mut sum = pair.into_inner();
-    let sum_var = sum.next().unwrap().as_str().to_owned();
+    let loop_var = sum.next().unwrap().as_str().to_owned();
     let low_expr = parse_expr(sum.next().unwrap().into_inner(), None, src)?;
     let high_expr = parse_expr(sum.next().unwrap().into_inner(), None, src)?;
 
     let low = reduction_expect_int(&low_expr)?;
     let high = reduction_expect_int(&high_expr)?;
 
-    let body_str = rhs.span().read_source(src);
-    let body = create_function(sum.as_str().to_owned(), vec![sum_var], rhs, body_str);
-
-    Ok((low, high, body))
-}
-
-fn create_function(name: String, params: Vec<String>, body_expr: Expr, body_str: String) -> Val {
-    let names = names_in_expr(&body_expr);
-    let param_count = params.len();
-    Val::Lambda(
-        // the function string contains the body of the definition for error handling, printing etc.
-        body_str.clone(),
-        names,
-        params.clone(),
-        Arc::new({
-            move |xs: Vec<Val>, env, span| {
-                if xs.len() != param_count {
-                    // throw an error if the argument count is incorrect
-                    return Err(Error::FnArgCount(name.clone(), param_count, xs.len(), span));
-                } else {
-                    // otherwise add arguments to the environment
-                    let mut env_inner = env.clone(); // TODO: avoid clone
-                    for (key, val) in params.iter().zip(xs) {
-                        env_inner.insert((*key).to_owned(), val);
-                    }
-                    // then evaluate the function body expression in the new, inner scope
-                    eval_expr(&body_expr, &env_inner)
-                }
-            }
-        }),
-    )
+    Ok((low, high, loop_var))
 }
 
 fn parse_stmt(
@@ -269,12 +235,11 @@ fn parse_stmt(
                 params.push(param.as_str().to_owned());
             }
             let body = def.next().unwrap().into_inner();
-            let body_str = body.as_str().to_owned();
             let body_expr = parse_expr(body, None, src)?;
             Ok(Some(Stmt::Definition(
                 func_name.clone(),
                 Expr::Const(
-                    create_function(func_name, params, body_expr, body_str),
+                    Val::Lambda(params, Either::Right(Box::new(body_expr))),
                     span,
                 ),
                 span,

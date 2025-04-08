@@ -109,8 +109,8 @@ impl Expr {
             Expr::Sqrt(_, span_info) => *span_info,
             Expr::Root(_, _, _, span_info) => *span_info,
             Expr::FnApp(_, _, _, span_info) => *span_info,
-            Expr::Sum(_, _, span_info) => *span_info,
-            Expr::Prod(_, _, span_info) => *span_info,
+            Expr::Sum(_, _, _, span_info) => *span_info,
+            Expr::Prod(_, _, _, span_info) => *span_info,
             Expr::Int(_, _, _, _, span_info) => *span_info,
         }
     }
