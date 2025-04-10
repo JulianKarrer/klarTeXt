@@ -25,9 +25,9 @@ static PRATT_PARSER: LazyLock<PrattParser<Rule>> = LazyLock::new(|| {
 
 #[derive(pest_derive::Parser)]
 #[grammar = "grammar.pest"] // relative to src
-struct TexParser;
+pub struct TexParser;
 
-fn parse_expr(
+pub fn parse_expr(
     expression: Pairs<Rule>,
     span_arg: Option<SpanInfo>,
     src: &str,
@@ -232,14 +232,18 @@ fn parse_stmt(
             let func_name = signature.next().unwrap().as_str().to_owned();
             let mut params = vec![];
             for param in signature {
-                params.push(param.as_str().to_owned());
+                let param_str = param.as_str().to_owned();
+                if params.contains(&param_str) {
+                    return Err(Error::DuplicateParamName(param_str, (&param).into()));
+                }
+                params.push(param_str);
             }
             let body = def.next().unwrap().into_inner();
             let body_expr = parse_expr(body, None, src)?;
             Ok(Some(Stmt::Definition(
                 func_name.clone(),
                 Expr::Const(
-                    Val::Lambda(params, Either::Right(Box::new(body_expr))),
+                    Val::Lambda(Either::Right((params, Box::new(body_expr)))),
                     span,
                 ),
                 span,

@@ -11,17 +11,21 @@ pub fn free_in_expr(expr: &Expr) -> HashSet<String> {
     match expr {
         Expr::Const(val, _) => match val {
             Val::Num(_) => HashSet::new(),
-            Val::Lambda(_, Either::Left(predefined)) => {
-                // predefined function don't depend on anything but their arguments
-                HashSet::from([predefined.identifier.to_owned()])
-            }
-            Val::Lambda(params, Either::Right(body)) => {
-                let mut inner = free_in_expr(&body);
-                // remove names bound by parameters from the free variables
-                for param in params {
-                    inner.remove(param);
+            Val::Lambda(func) => {
+                match func {
+                    Either::Left(_) => {
+                        // predefined function don't depend on anything but their arguments
+                        HashSet::new()
+                    }
+                    Either::Right((params, body)) => {
+                        let mut inner = free_in_expr(&body);
+                        // remove names bound by parameters from the free variables
+                        for param in params {
+                            inner.remove(param);
+                        }
+                        inner
+                    }
                 }
-                inner
             }
         },
         Expr::Sum(body, loop_var, _, _) | Expr::Prod(body, loop_var, _, _) => {
@@ -30,31 +34,26 @@ pub fn free_in_expr(expr: &Expr) -> HashSet<String> {
             inner
         }
         Expr::Ident(name, _) => HashSet::from([name.to_owned()]),
-        Expr::Neg(expr, _)
-        | Expr::Fac(expr, _)
-        | Expr::Sqrt(expr, _)
-        | Expr::Root(_, expr, _, _) => free_in_expr(expr),
+        Expr::Neg(expr, _) | Expr::Fac(expr, _) | Expr::Sqrt(expr, _) => free_in_expr(expr),
         Expr::Add(expr1, expr2, _)
         | Expr::Sub(expr1, expr2, _)
         | Expr::Mul(expr1, expr2, _)
         | Expr::IMul(expr1, expr2, _)
         | Expr::Div(expr1, expr2, _)
-        | Expr::Pow(expr1, expr2, _) => &free_in_expr(expr1) | &free_in_expr(&expr2),
-        Expr::FnApp(name, exprs, _, _) => {
+        | Expr::Pow(expr1, expr2, _)
+        | Expr::Root(expr1, expr2, _, _) => &free_in_expr(expr1) | &free_in_expr(&expr2),
+        Expr::FnApp(_, exprs, _, _) => {
             // collect names in argument expressions
-            let args_names = exprs
-                .iter()
-                .map(|expr| free_in_expr(&expr))
-                .reduce(|acc: HashSet<String>, e: HashSet<String>| &acc | &e)
-                .unwrap();
-            // combine with names in function expression
-            &HashSet::from([name.to_owned()]) | &args_names
+            exprs.iter().map(|expr| free_in_expr(&expr)).fold(
+                HashSet::new(),
+                |acc: HashSet<String>, e: HashSet<String>| &acc | &e,
+            )
         }
         Expr::Int(expr, expr1, dx, expr2, _) => {
-            let mut inner: HashSet<String> = Into::<HashSet<String>>::into(
-                &Into::<HashSet<String>>::into(&free_in_expr(expr) | &free_in_expr(expr1))
-                    | &free_in_expr(&expr2),
-            );
+            let mut inner: HashSet<String> = HashSet::new();
+            inner.extend(free_in_expr(expr));
+            inner.extend(free_in_expr(expr1));
+            inner.extend(free_in_expr(expr2));
             inner.remove(dx);
             inner
         }
@@ -131,11 +130,12 @@ fn topological_visit(
     Ok(())
 }
 
-pub fn resolve_const_definitions(prog: Program) -> Result<(Program, Env), Error> {
+pub fn resolve_const_definitions(prog: Program) -> Result<(Program, Env, HashSet<String>), Error> {
     let mut graph = HashMap::with_capacity(prog.len());
     let mut definitions: HashMap<String, Expr> = HashMap::new();
     let mut prints = vec![];
     let mut env = HashMap::new();
+    let mut fn_overwritten = HashSet::new();
 
     // add predefined definitions to the dependency graph
     for cnst in (*PREDEFINED).keys() {
@@ -146,10 +146,20 @@ pub fn resolve_const_definitions(prog: Program) -> Result<(Program, Env), Error>
         match stmt {
             Stmt::Definition(name, expr, span) => {
                 if let Some(_) = graph.insert(name.to_owned(), free_in_expr(&expr)) {
+                    // if anything predefined was overwritten, give a warning
                     WARNINGS
                         .lock()
                         .unwrap()
                         .push(Warning::PredefinedOverwritten(name.to_owned(), span));
+                    // if a predefined function was overwritten, it cannot be used in autodiff
+                    if let Some(overwritten) = PREDEFINED.get(&name) {
+                        match overwritten {
+                            Val::Num(_) => {}
+                            Val::Lambda(_) => {
+                                fn_overwritten.insert(name.clone());
+                            }
+                        }
+                    }
                 };
                 let span = expr.span();
                 if let Some(_) = definitions.insert(name.to_owned(), expr) {
@@ -175,5 +185,5 @@ pub fn resolve_const_definitions(prog: Program) -> Result<(Program, Env), Error>
     }
 
     // return the resolved definitions along with other statements
-    Ok((prints, env))
+    Ok((prints, env, fn_overwritten))
 }

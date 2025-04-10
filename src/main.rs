@@ -1,9 +1,11 @@
+use differentiate::ddx;
 use disambiguate_fnapp::disambiguate;
-use error::{handle_errs, span_merge, Error, SpanInfo};
+use error::{handle_errs, span_merge, Error, SpanInfo, Warning, WARNINGS};
 use io::{delete_matching_files, get_file_name, write_to_sibling_file};
 use itertools::Itertools;
-use parse::parse_main;
-use peroxide::fuga::integrate;
+use parse::{parse_expr, parse_main, TexParser};
+use peroxide::fuga::{gamma, integrate};
+use pest::Parser;
 use predefined::PREDEFINED;
 use resolve_def::resolve_const_definitions;
 use utils::Either;
@@ -16,12 +18,14 @@ use std::{
     ops::RangeInclusive,
     sync::Arc,
 };
+mod differentiate;
 mod disambiguate_fnapp;
 mod error;
 mod io;
 mod parse;
 mod predefined;
 mod resolve_def;
+mod simplify;
 mod utils;
 
 type Program = Vec<Stmt>;
@@ -158,12 +162,19 @@ impl Display for Expr {
 struct PredefinedFunction {
     closure: Arc<dyn Fn(Vec<Val>, &Env, SpanInfo) -> Result<Val, Error> + Send + Sync>,
     identifier: String,
-    takes_any_number: bool,
-    _derivative: Option<Arc<dyn Fn(SpanInfo) -> Val + Send + Sync>>,
+    /// `param_count` is None if any number of arguments is taken
+    param_count: Option<usize>,
+    derivative: Option<
+        Arc<
+            dyn Fn(Vec<Box<Expr>>, SpanInfo) -> Result<(Expr, Vec<&'static str>), Error>
+                + Send
+                + Sync,
+        >,
+    >,
 }
 impl Display for PredefinedFunction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.identifier)
+        write!(f, r"{}", self.identifier)
     }
 }
 
@@ -178,7 +189,21 @@ enum Val {
     ///   - the body of the function
     ///   - or a closure representing a predefined function as well as its name
     /// A negative argument count allows any number of arguments
-    Lambda(Vec<String>, Either<PredefinedFunction, Box<Expr>>),
+    Lambda(Either<PredefinedFunction, (Vec<String>, Box<Expr>)>),
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+/// create infinite x_i variable names
+struct Vars {
+    counter: usize,
+}
+impl Iterator for Vars {
+    type Item = String;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.counter += 1;
+        Some(format!(r"x_{{ {} }}", self.counter))
+    }
 }
 
 enum Typ {
@@ -189,7 +214,7 @@ impl Into<Typ> for Val {
     fn into(self) -> Typ {
         match self {
             Val::Num(_) => Typ::Num,
-            Val::Lambda(_, _) => Typ::Lam,
+            Val::Lambda(_) => Typ::Lam,
         }
     }
 }
@@ -197,7 +222,7 @@ impl Into<Typ> for &Val {
     fn into(self) -> Typ {
         match self {
             Val::Num(_) => Typ::Num,
-            Val::Lambda(_, _) => Typ::Lam,
+            Val::Lambda(_) => Typ::Lam,
         }
     }
 }
@@ -215,17 +240,28 @@ impl Display for Val {
             Val::Num(INFINITY) => write!(f, r"\infty"),
             Val::Num(NEG_INFINITY) => write!(f, r"-\infty"),
             Val::Num(x) => write!(f, "{}", snap_to_int(*x)),
-            Val::Lambda(params, func) => {
-                let name = match func {
-                    Either::Left(predef) => format!("{}", predef),
-                    Either::Right(expr) => format!("{}", expr),
-                };
-                if params.is_empty() {
-                    write!(f, "{}", name)
-                } else {
-                    write!(f, "{} \\mapsto {}", params.join(", "), name)
+            Val::Lambda(func) => match func {
+                Either::Left(predef) => {
+                    if let Some(count) = predef.param_count {
+                        if count > 0 {
+                            let params = Vars::default().into_iter().take(count).join(", ");
+                            return write!(
+                                f,
+                                r"{} \\mapsto {}\left({}\right)",
+                                params, predef.identifier, params
+                            );
+                        }
+                    };
+                    write!(f, "{}", predef)
                 }
-            }
+                Either::Right((params, expr)) => {
+                    if params.is_empty() {
+                        write!(f, "{}", expr)
+                    } else {
+                        write!(f, "{} \\mapsto {}", params.join(", "), expr)
+                    }
+                }
+            },
         }
     }
 }
@@ -262,7 +298,7 @@ fn eval_num(expr: &Expr, env: &Env, err: Option<Error>) -> Result<f64, Error> {
     let res = eval_expr(expr, env)?;
     match res {
         Val::Num(x) => Ok(x),
-        Val::Lambda(_, _) => {
+        Val::Lambda(_) => {
             if let Some(err) = err {
                 Err(err)
             } else {
@@ -304,34 +340,42 @@ fn eval_expr(expr: &Expr, env: &Env) -> Result<Val, Error> {
             match &func_val {
                 Val::Num(_) => Err(Error::TypeError(Typ::Lam.name(), Typ::Num.name(), span)),
                 // otherwise, there is a function value to work with
-                Val::Lambda(params, func) => {
+                Val::Lambda(func) => {
                     // evaluate the arguments
                     let arg_vals = args
                         .iter()
                         .map(|arg| eval_expr(arg, env))
                         .collect::<Result<Vec<Val>, Error>>()?;
+
                     // if the number of arguments doesn't match the parameters, throw an error
-                    if arg_vals.len() != params.len() {
-                        if let Either::Left(PredefinedFunction {
-                            takes_any_number: true,
-                            ..
-                        }) = func
-                        {
-                            // there are predefined functions that are overloaded for any number of arguments
-                            // in this case, do nothing
-                        } else {
-                            // otherwise, return the error
-                            return Err(Error::FnArgCount(
-                                format!("{}", func_val),
-                                params.len(),
-                                arg_vals.len(),
-                                span,
-                            ));
+                    match func {
+                        Either::Left(predef) => {
+                            if let Some(count) = predef.param_count {
+                                if count != arg_vals.len() {
+                                    return Err(Error::FnArgCount(
+                                        format!("{}", func_val),
+                                        count,
+                                        arg_vals.len(),
+                                        span,
+                                    ));
+                                }
+                            }
+                        }
+                        Either::Right((params, _)) => {
+                            if arg_vals.len() != params.len() {
+                                return Err(Error::FnArgCount(
+                                    format!("{}", func_val),
+                                    params.len(),
+                                    arg_vals.len(),
+                                    span,
+                                ));
+                            }
                         }
                     }
+
                     match func {
                         Either::Left(predefined) => (predefined.closure)(arg_vals, env, span),
-                        Either::Right(body) => {
+                        Either::Right((params, body)) => {
                             // there is a user-defined function
                             // add arguments to the environment and then evaluate the body
                             let mut env_inner = env.clone();
@@ -346,18 +390,38 @@ fn eval_expr(expr: &Expr, env: &Env) -> Result<Val, Error> {
         }
         Expr::Const(val, _) => match val {
             Val::Num(x) => Ok(Val::Num(*x)),
-            Val::Lambda(_, _) => Ok(val.clone()),
+            Val::Lambda(_) => Ok(val.clone()),
         },
         Expr::Neg(x, _) => Ok(Val::Num(-eval_num(x, env, None)?)),
         Expr::Fac(x, span) => {
             let val = eval_num(x, env, None)?;
-            let val_int = val.round() as u64;
-            if val < 0. {
-                Err(Error::FactorialNeg(*span))
-            } else if (val - val_int as f64).abs() > std::f64::EPSILON {
-                Err(Error::FactorialFloat(*span))
+            let val_int = val.round() as i64;
+            if val < 0. || (val - val_int as f64).abs() > std::f64::EPSILON {
+                let res = gamma(val);
+                WARNINGS
+                    .lock()
+                    .unwrap()
+                    .push(Warning::FactorialIsGamma(format!("{}", val), *span));
+                if res.is_nan() {
+                    Err(Error::GammaUndefined(*span))
+                } else {
+                    Ok(Val::Num(res))
+                }
             } else {
-                Ok(Val::Num((1..=val_int).map(|x| x as f64).product()))
+                // 170! is the maximum representable factorial in f64
+                // -> precalculate everything
+                const FACTORIALS: [f64; 172] = {
+                    let mut facts: [f64; 172] = [1.; 172];
+                    let mut i: usize = 1;
+                    while i < 170 {
+                        facts[i] = facts[i - 1] * i as f64;
+                        i += 1
+                    }
+                    // 171! and onwards is note f64-representable
+                    facts[171] = f64::INFINITY;
+                    facts
+                };
+                Ok(Val::Num(FACTORIALS[val_int.min(171) as usize]))
             }
         }
         Expr::Add(lhs, rhs, _) => Ok(Val::Num(
@@ -490,11 +554,11 @@ fn snap_to_int(val: f64) -> f64 {
 
 /// Print debug information to `stdout` while executing the program instead of writing results to output files.
 /// Throws the same errors as the regular [`run`] function.
-fn debug_run(prog: Program, env: Env) -> Result<(), Error> {
+fn debug_run(prog: Program, env: &Env) -> Result<(), Error> {
     // println!("PROGRAM: -----------");
     // println!("{:#?}", prog);
     println!("DEFINITIONS: -----------");
-    for (k, v) in &env {
+    for (k, v) in env {
         println!("{} = {}", k, v);
     }
     println!("PRINTS: ----------------");
@@ -509,7 +573,7 @@ fn debug_run(prog: Program, env: Env) -> Result<(), Error> {
 /// Run the program using the specified environment of definitions.
 /// - **Deletes** all program output files that are siblings to the source code file
 /// - **Writes** the results of IO statements to output files to be included by a corresponding LaTeX package.
-fn run(prog: Program, env: Env, filename: &str, err_file_name: &str) -> Result<(), Error> {
+fn run(prog: Program, env: &Env, filename: &str, err_file_name: &str) -> Result<(), Error> {
     Ok({
         // execute the program
         for stmt in prog {
@@ -564,7 +628,7 @@ pub fn main() {
     let p0 = handle_errs(parse_main(&src), &src, &filename, &err_wrn_file_name);
 
     // PASS 1 - RESOLVING DEFINITIONS
-    let (p1, env) = handle_errs(
+    let (p1, env, fn_overwritten) = handle_errs(
         resolve_const_definitions(p0),
         &src,
         &filename,
@@ -580,12 +644,27 @@ pub fn main() {
     // - `run` writes output files in the directory of the source code file
     if let Some((err_file_name, _)) = &err_wrn_file_name {
         handle_errs(
-            run(p2, env, &filename, err_file_name),
+            run(p2, &env, &filename, err_file_name),
             &src,
             &filename,
             &err_wrn_file_name,
         );
     } else {
-        handle_errs(debug_run(p2, env), &src, &filename, &None);
+        handle_errs(debug_run(p2, &env), &src, &filename, &None);
     }
+
+    // test
+    let test_src = r"\int_{x}^{2x}1\,dt";
+    let test = parse_expr(
+        TexParser::parse(parse::Rule::expr, test_src).unwrap(),
+        None,
+        test_src,
+    )
+    .unwrap();
+    let test_str = format!("{}", test);
+    println!(
+        "TEST DIFFERENTIATION\n{}\n{}",
+        test_str,
+        ddx("x", test, &env, &fn_overwritten).unwrap()
+    );
 }

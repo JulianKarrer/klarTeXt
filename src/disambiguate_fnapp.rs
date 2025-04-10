@@ -48,7 +48,7 @@ fn disamb_expr(expr: Expr, env: &Env) -> Result<Expr, Error> {
                         *args_span,
                     )),
                 },
-                Val::Lambda(_, _) => Ok(expr),
+                Val::Lambda(_) => Ok(expr),
             }
         }
         // unary recursive cases

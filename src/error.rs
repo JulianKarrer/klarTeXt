@@ -25,11 +25,12 @@ pub enum Error {
     /// where left, where right
     ImpMulNumNum(SpanInfo, SpanInfo),
     // MATH ERRORS --------------------
-    FactorialNeg(SpanInfo),
-    FactorialFloat(SpanInfo),
+    // FactorialNeg(SpanInfo),
+    // FactorialFloat(SpanInfo),
     DivByZero(SpanInfo),
     ZerothRoot(SpanInfo),
     ComplexNumber(SpanInfo),
+    GammaUndefined(SpanInfo),
     // generic
     /// error type, in operation/function, where
     MathError(String, String, SpanInfo),
@@ -48,11 +49,18 @@ pub enum Error {
     // INTEGRALS ----------------------
     IntegralNot1D(SpanInfo),
     IntegralInternalErr(String, SpanInfo),
+    // DIFFERENTIATION ----------------
+    DifferentiationError(String, SpanInfo),
+    // WEIRD SHIT ---------------------
+    DuplicateParamName(String, SpanInfo),
 }
 
 #[derive(Debug)]
 pub enum Warning {
+    /// overwritten name, where
     PredefinedOverwritten(String, SpanInfo),
+    /// argument of the factorial, where
+    FactorialIsGamma(String, SpanInfo),
     // Overflow(String, SpanInfo),
 }
 
@@ -220,8 +228,6 @@ impl ErrReportable for Error {
                 cycle.iter().map(|(_, span, _)| span.from).min().unwrap()
                     ..cycle.iter().map(|(_, span, _)| span.to).max().unwrap()
             }
-            Error::FactorialNeg(span_info) => span_info.into(),
-            Error::FactorialFloat(span_info) => span_info.into(),
             Error::DivByZero(span_info) => span_info.into(),
             Error::ImpMulRhsNum(lhs, rhs) => lhs.from..rhs.to,
             Error::ImpMulNumNum(lhs, rhs) => lhs.from..rhs.to,
@@ -235,6 +241,9 @@ impl ErrReportable for Error {
             Error::ReductionNonIntegerVar(span_info) => span_info.into(),
             Error::IntegralNot1D(span_info) => span_info.into(),
             Error::IntegralInternalErr(_, span_info) => span_info.into(),
+            Error::DifferentiationError(_, span_info) => span_info.into(),
+            Error::GammaUndefined(span_info) => span_info.into(),
+            Error::DuplicateParamName(_, span_info) => span_info.into(),
         }
     }
 
@@ -268,14 +277,6 @@ impl ErrReportable for Error {
                 (lhs.into(), "this is a number".to_owned()),
                 (rhs.into(), "this is also a number".to_owned()),
             ],
-            Error::FactorialNeg(_) => vec![(
-                self.span().start..self.span().end - 1,
-                "This expression evaluates to a negative number.".to_owned(),
-            )],
-            Error::FactorialFloat(_) => vec![(
-                self.span().start..self.span().end - 1,
-                "This expression evaluates to a non-integer.".to_owned(),
-            )],
             Error::DivByZero(_) => vec![(
                 self.span(),
                 "This division results in an undefined value".to_owned(),
@@ -304,6 +305,17 @@ impl ErrReportable for Error {
                 self.span(),
                 "this integrand did not evaluate to a number".to_owned(),
             )],
+            Error::DifferentiationError(_, _) => {
+                vec![(self.span(), "cannot differentiate this".to_owned())]
+            }
+            Error::GammaUndefined(_) => vec![(
+                self.span(),
+                "the gamma function is undefined here".to_owned(),
+            )],
+            Error::DuplicateParamName(name, _) => vec![(
+                self.span(),
+                format!("the parameter name {} is used multiple times", name),
+            )],
         }
     }
 
@@ -317,8 +329,6 @@ impl ErrReportable for Error {
                 "Implicit multiplication with number on the right side".to_owned()
             }
             Error::ImpMulNumNum(_, _) => "Implicit multiplication of two numbers".to_owned(),
-            Error::FactorialNeg(_) => "Negative argument to a factorial".to_owned(),
-            Error::FactorialFloat(_) => "Non-integer argument to a factorial".to_owned(),
             Error::DivByZero(_) => "Division by Zero".to_owned(),
             Error::ComplexNumber(_) => "Complex Number encountered".to_owned(),
             Error::ZerothRoot(_) => "Zero-th Root".to_owned(),
@@ -332,6 +342,9 @@ impl ErrReportable for Error {
             Error::ReductionNonIntegerVar(_) => "Reduction over non-integers".to_owned(),
             Error::IntegralNot1D(_) => "Multidimensional Integral".to_owned(),
             Error::IntegralInternalErr(_, _) => "Internal Error in Integral".to_owned(),
+            Error::DifferentiationError(_, _) => "Unable to differentiate".to_owned(),
+            Error::GammaUndefined(_) => "Undefined Gamma Function".to_owned(),
+            Error::DuplicateParamName(_, _) => "Duplicate Parameter Name".to_owned(),
         }
     }
 
@@ -343,8 +356,6 @@ impl ErrReportable for Error {
             Error::DefCircular(_) => "Cyclic Definition detected.\nCompile-time recursion using the static definition '=' is not currently supported.\nDefinitions with '=' bind an expression immutably to a single name forever.\nMaybe you meant to use a mutable assignment?".to_owned(),
             Error::ImpMulRhsNum(_, _) => "Implicit multiplication is meant to be used for terms like:\n - 3x + 2y\n - 2(x+3)\nBut here, there is a number on the right-hand side of the multiplication.\nThis is an error, since it is usually unintended.".to_owned(),
             Error::ImpMulNumNum(_, _) => "Implicit multiplication is meant to be used for terms like:\n - 3x + 2y\n - 2(x+3)\nBut here it was used to multiply two numbers.\nThis is an error, since it is usually unintended.".to_owned(),
-            Error::FactorialNeg(_) => "The Factorial function '!' is only defined for non-negative integers.".to_owned(),
-            Error::FactorialFloat(_) => "The Factorial function '!' is only defined for non-negative integers.\nPerhaps you want to use a more general Gamma function Γ?".to_owned(),
             Error::DivByZero(_) => "You can sometimes avoid divisions by zero by rearranging terms.\nMultiplication implements short-circuiting, so 'zero times x' is always zero, even if x is undefined.\nIn that case, evaluation is left-to-right and the order of terms matters!".to_owned(),
             Error::ComplexNumber(_) => "Complex numbers are currently not supported.\nPlease avoid taking roots of negative arguments.".into(),
             Error::ZerothRoot(_) => "The zero-th root is undefined.\n`\\sqrt[0]{1}` could be argued to be any number, which is also unheplful\nCongratulations on this rare error message!".into(),
@@ -356,6 +367,9 @@ impl ErrReportable for Error {
             Error::ReductionNonIntegerVar(_) => "You attempted to sum from or to limits that do not evaluate to an integer.\nMaybe you meant to integrate instead of sum?".to_owned(),
             Error::IntegralNot1D(_) => "Currently, only definite integrals over one integration variable are supported.\nTo calculate multidimensional integrals, please nest one integral in the other to achieve the same effect.\n\nGGauss-Kronrod G7K15 quadrature is used to integrate numerically.\nhttps://arxiv.org/pdf/1003.4629".to_owned(),
             Error::IntegralInternalErr(intvar, _) => format!("The integrand did not evaluate to a number.\n Please check for errors inside.\nThe integration variable, which overwrites variables of the same name defined somewhere else, was {}.\n\nGauss-Kronrod G7K15 quadrature is used to integrate numerically.\nhttps://arxiv.org/pdf/1003.4629", intvar),
+            Error::DifferentiationError(err, _) => format!("There was an error during automatic differentiation:\n{}\n\nWorst-case, just differentiate your expression by hand?", err),
+            Error::GammaUndefined(_) => "The Gamma function Γ that generalizes the factorial ! was evoked where it is undefined.\nNote that the gamma function is undefined for negative integers and zero.".into(),
+            Error::DuplicateParamName(_, _) => "You cannot use the same parameter name twice in the same signature.\nFor example `f(x,x,y)=...` is forbidden, since it is unclear what that would mean.".into(),
         }
     }
 }
@@ -364,6 +378,7 @@ impl ErrReportable for Warning {
     fn span(&self) -> std::ops::Range<usize> {
         match self {
             Warning::PredefinedOverwritten(_, span_info) => span_info.into(),
+            Warning::FactorialIsGamma(_, span_info) => span_info.into(),
         }
     }
 
@@ -373,18 +388,25 @@ impl ErrReportable for Warning {
                 self.span(),
                 format!("The identifier {} is overwritten.", name),
             )],
+            Warning::FactorialIsGamma(name, _) => {
+                vec![(self.span(), format!("{} is valid for Γ, not !", name))]
+            }
         }
     }
 
     fn messages(&self) -> String {
         match self {
             Warning::PredefinedOverwritten(_, _) => format!("Predefined Identifier Overwritten"),
+            Warning::FactorialIsGamma(_, _) => {
+                format!("Factorial on non-integer or non-positive number")
+            }
         }
     }
 
     fn note(&self) -> String {
         match self {
             Warning::PredefinedOverwritten(_, _) => String::new(),
+            Warning::FactorialIsGamma(name, _) => format!("The factorial is technically only defined on integers >= 1\nHere, the argument of the factorial evaluated to {}\nand was interpreted using the more general Gamma function as Γ(1+({})).", name, name),
         }
     }
 }
