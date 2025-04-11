@@ -65,9 +65,20 @@
 
 \AtBeginDocument{\callKlarTeXt}
 
+\newcommand{\ddx}[1]{\frac{\partial}{\partial #1}}
 
 \newenvironment{program}[1][]{%
   \newcommand{\print}[1]{%
+    ##1 = %
+    \stepcounter{klarCall}%
+    \edef\tempFile{klarTeXt_\jobname_\theklarCall.tex}%
+    \IfFileExists{\tempFile}{%
+      \input{\tempFile}%
+    }{%
+      \text{unknown}%
+    }%
+  }%
+  \newcommand{\simplify}[1]{%
     ##1 = %
     \stepcounter{klarCall}%
     \edef\tempFile{klarTeXt_\jobname_\theklarCall.tex}%

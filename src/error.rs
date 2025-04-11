@@ -66,7 +66,7 @@ pub enum Warning {
 
 pub static WARNINGS: LazyLock<Mutex<Vec<Warning>>> = LazyLock::new(|| Default::default());
 
-#[derive(Debug, Copy, Clone, Default)]
+#[derive(Debug, Copy, Clone, Default, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct SpanInfo {
     pub from: usize,
     pub to: usize,
@@ -120,6 +120,7 @@ impl Expr {
             Expr::Sum(_, _, _, span_info) => *span_info,
             Expr::Prod(_, _, _, span_info) => *span_info,
             Expr::Int(_, _, _, _, span_info) => *span_info,
+            Expr::Ddx(_, _, span_info) => *span_info,
         }
     }
 }
@@ -468,6 +469,8 @@ fn rule_description(rule: Rule) -> &'static str {
         Rule::reduction => r"a reduction, like a sum or product",
         Rule::newl_seperated_statemtnts => r"statements seperated by newlines (\\)",
         Rule::integral => r"a definite, 1D integral (\int_{...}^{...} ... \,dx)",
+        Rule::simplify_statement => r"a simplification statement",
+        Rule::ddx => r"a partial derivative",
     }
 }
 

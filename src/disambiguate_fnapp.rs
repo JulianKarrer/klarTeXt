@@ -20,6 +20,7 @@ pub fn disambiguate(prog: Program, env: &Env) -> Result<Program, Error> {
                 Stmt::Definition(identifier, disamb_expr(expr, env)?, span)
             }
             Stmt::Print(expr, counter) => Stmt::Print(disamb_expr(expr, env)?, counter),
+            Stmt::Simplify(expr, counter) => Stmt::Simplify(disamb_expr(expr, env)?, counter),
         })
     }
     Ok(res)
@@ -27,10 +28,8 @@ pub fn disambiguate(prog: Program, env: &Env) -> Result<Program, Error> {
 
 fn disamb_expr(expr: Expr, env: &Env) -> Result<Expr, Error> {
     match expr {
-        // base cases
         Expr::Const(ref _val, _) => Ok(expr),
         Expr::Ident(_, _) => Ok(expr),
-        // interesting case
         Expr::FnApp(ref func_name, ref args, ref name_span, ref args_span) => {
             let func_val = lookup_env(&func_name, env, *args_span)?;
             match &func_val {
@@ -38,7 +37,7 @@ fn disamb_expr(expr: Expr, env: &Env) -> Result<Expr, Error> {
                     [arg] => {
                         return Ok(Expr::IMul(
                             Box::new(Expr::Const(Val::Num(*x), *name_span)),
-                            arg.clone(),
+                            Box::new(arg.clone()),
                             *args_span,
                         ))
                     }
@@ -51,7 +50,6 @@ fn disamb_expr(expr: Expr, env: &Env) -> Result<Expr, Error> {
                 Val::Lambda(_) => Ok(expr),
             }
         }
-        // unary recursive cases
         Expr::Sqrt(expr, span) => Ok(Expr::Sqrt(Box::new(disamb_expr(*expr, env)?), span)),
         Expr::Neg(expr, span) => Ok(Expr::Neg(Box::new(disamb_expr(*expr, env)?), span)),
         Expr::Fac(expr, span) => Ok(Expr::Fac(Box::new(disamb_expr(*expr, env)?), span)),
@@ -61,7 +59,6 @@ fn disamb_expr(expr: Expr, env: &Env) -> Result<Expr, Error> {
             span1,
             span2,
         )),
-        // binary recursive cases
         Expr::Add(expr, expr1, span) => Ok(Expr::Add(
             Box::new(disamb_expr(*expr, env)?),
             Box::new(disamb_expr(*expr1, env)?),
@@ -92,7 +89,6 @@ fn disamb_expr(expr: Expr, env: &Env) -> Result<Expr, Error> {
             Box::new(disamb_expr(*expr1, env)?),
             span,
         )),
-
         Expr::Sum(expr, loop_var, range_inclusive, span) => Ok(Expr::Sum(
             Box::new(disamb_expr(*expr, env)?),
             loop_var,
@@ -112,5 +108,6 @@ fn disamb_expr(expr: Expr, env: &Env) -> Result<Expr, Error> {
             Box::new(disamb_expr(*body, env)?),
             span,
         )),
+        Expr::Ddx(x, expr, span) => Ok(Expr::Ddx(x, Box::new(disamb_expr(*expr, env)?), span)),
     }
 }

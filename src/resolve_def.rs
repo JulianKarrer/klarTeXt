@@ -57,6 +57,7 @@ pub fn free_in_expr(expr: &Expr) -> HashSet<String> {
             inner.remove(dx);
             inner
         }
+        Expr::Ddx(_, expr, _) => free_in_expr(expr),
     }
 }
 
@@ -133,7 +134,7 @@ fn topological_visit(
 pub fn resolve_const_definitions(prog: Program) -> Result<(Program, Env, HashSet<String>), Error> {
     let mut graph = HashMap::with_capacity(prog.len());
     let mut definitions: HashMap<String, Expr> = HashMap::new();
-    let mut prints = vec![];
+    let mut stmts = vec![];
     let mut env = HashMap::new();
     let mut fn_overwritten = HashSet::new();
 
@@ -166,7 +167,7 @@ pub fn resolve_const_definitions(prog: Program) -> Result<(Program, Env, HashSet
                     return Err(Error::DefMultiply(span, name.to_owned()));
                 };
             }
-            Stmt::Print(expr, c) => prints.push(Stmt::Print(expr, c)),
+            _ => stmts.push(stmt),
         }
     }
 
@@ -178,12 +179,12 @@ pub fn resolve_const_definitions(prog: Program) -> Result<(Program, Env, HashSet
         if let Some(expr) = definitions.get(&name) {
             // evaluate the expression:
             // this must be possible, since definitions are now topologically ordered
-            let res = eval_expr(expr, &env)?;
+            let res = eval_expr(expr, &env, &fn_overwritten)?;
             // add the resolved definition to the environment
             env.insert(name.to_owned(), res);
         }
     }
 
     // return the resolved definitions along with other statements
-    Ok((prints, env, fn_overwritten))
+    Ok((stmts, env, fn_overwritten))
 }

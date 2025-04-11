@@ -52,7 +52,7 @@ fn predefined_unary_fn(
             identifier: name.to_owned(),
             derivative: if let Some(deriv) = derivative {
                 Some(Arc::new(|args, s| match &args[..] {
-                    [arg] => Ok(deriv(*arg.clone(), s)),
+                    [arg] => Ok(deriv(arg.clone(), s)),
                     _ => Err(Error::FnArgCount(name.to_owned(), 1, args.len(), s)),
                 }))
             } else {
@@ -75,7 +75,7 @@ pub static PREDEFINED: LazyLock<Env> = LazyLock::new(|| {
         predefined_unary_fn(r"\sin", "sine", None, |x| x.sin(), {
             fn deriv(arg: Expr, s: SpanInfo) -> DerivRet {
                 (
-                    Expr::FnApp(r"\cos".to_owned(), vec![Box::new(arg)], s, s),
+                    Expr::FnApp(r"\cos".to_owned(), vec![arg], s, s),
                     vec![r"\cos"],
                 )
             }
@@ -85,7 +85,7 @@ pub static PREDEFINED: LazyLock<Env> = LazyLock::new(|| {
             fn deriv(arg: Expr, s: SpanInfo) -> DerivRet {
                 (
                     Expr::Neg(
-                        Box::new(Expr::FnApp(r"\sin".to_owned(), vec![Box::new(arg)], s, s)),
+                        Box::new(Expr::FnApp(r"\sin".to_owned(), vec![arg], s, s)),
                         s,
                     ),
                     vec![r"\sin"],
@@ -105,12 +105,7 @@ pub static PREDEFINED: LazyLock<Env> = LazyLock::new(|| {
                         Expr::Div(
                             Box::new(Expr::Const(Val::Num(1.), s)),
                             Box::new(Expr::Pow(
-                                Box::new(Expr::FnApp(
-                                    r"\cos".to_owned(),
-                                    vec![Box::new(arg)],
-                                    s,
-                                    s,
-                                )),
+                                Box::new(Expr::FnApp(r"\cos".to_owned(), vec![arg], s, s)),
                                 Box::new(Expr::Const(Val::Num(2.), s)),
                                 s,
                             )),
@@ -214,7 +209,7 @@ pub static PREDEFINED: LazyLock<Env> = LazyLock::new(|| {
         predefined_unary_fn(r"\sinh", "hyperbolic sine", None, |x| x.cosh(), {
             fn deriv(arg: Expr, s: SpanInfo) -> DerivRet {
                 (
-                    Expr::FnApp(r"\cosh".to_owned(), vec![Box::new(arg)], s, s),
+                    Expr::FnApp(r"\cosh".to_owned(), vec![arg], s, s),
                     vec![r"\cosh"],
                 )
             }
@@ -223,7 +218,7 @@ pub static PREDEFINED: LazyLock<Env> = LazyLock::new(|| {
         predefined_unary_fn(r"\cosh", "hyperbolic cosine", None, |x| x.cosh(), {
             fn deriv(arg: Expr, s: SpanInfo) -> DerivRet {
                 (
-                    Expr::FnApp(r"\sinh".to_owned(), vec![Box::new(arg)], s, s),
+                    Expr::FnApp(r"\sinh".to_owned(), vec![arg], s, s),
                     vec![r"\sinh"],
                 )
             }
@@ -236,7 +231,7 @@ pub static PREDEFINED: LazyLock<Env> = LazyLock::new(|| {
                     Expr::Div(
                         Box::new(Expr::Const(Val::Num(1.), s)),
                         Box::new(Expr::Pow(
-                            Box::new(Expr::FnApp(r"\cosh".to_owned(), vec![Box::new(arg)], s, s)),
+                            Box::new(Expr::FnApp(r"\cosh".to_owned(), vec![arg], s, s)),
                             Box::new(Expr::Const(Val::Num(2.), s)),
                             s,
                         )),
@@ -280,7 +275,7 @@ pub static PREDEFINED: LazyLock<Env> = LazyLock::new(|| {
                                 Box::new(arg),
                                 Box::new(Expr::FnApp(
                                     r"\ln".to_owned(),
-                                    vec![Box::new(Expr::Const(Val::Num(10.), s))],
+                                    vec![Expr::Const(Val::Num(10.), s)],
                                     s,
                                     s,
                                 )),
@@ -311,7 +306,7 @@ pub static PREDEFINED: LazyLock<Env> = LazyLock::new(|| {
                                 Box::new(arg),
                                 Box::new(Expr::FnApp(
                                     r"\ln".to_owned(),
-                                    vec![Box::new(Expr::Const(Val::Num(10.), s))],
+                                    vec![Expr::Const(Val::Num(10.), s)],
                                     s,
                                     s,
                                 )),
@@ -329,7 +324,7 @@ pub static PREDEFINED: LazyLock<Env> = LazyLock::new(|| {
             fn deriv(arg: Expr, s: SpanInfo) -> DerivRet {
                 // e^x
                 (
-                    Expr::FnApp(r"\exp".to_owned(), vec![Box::new(arg)], s, s),
+                    Expr::FnApp(r"\exp".to_owned(), vec![arg], s, s),
                     vec![r"\exp"],
                 )
             }

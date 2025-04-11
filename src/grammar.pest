@@ -20,9 +20,10 @@
     "\\end{program}"
   }
 
-  statement = { fn_definition | definition | print_statement | expr_statement }
+  statement = { fn_definition | definition | print_statement | simplify_statement | expr_statement  }
   expr_statement = { expr }
   print_statement = {"\\print{" ~ expr ~ "}"}
+  simplify_statement = {"\\simplify{" ~ expr ~ "}"}
   definition = { identifier ~ "=" ~ expr }
   fn_definition = { fn_signautre ~ "=" ~ expr }
 
@@ -97,7 +98,7 @@
   keyword = { 
     "\\left" | "\\right" | "\\cdot" | "\\frac" | "\\sfrac" 
   | "\\sqrt"| "\\infty" | "\\sum" | "\\prod" | "\\begin" | "\\end" 
-  | "\\int" | "\\print"
+  | "\\int" | "\\print" | "\\ddx" | "\\partial"
   }
   identifier = @{ (!keyword ~ (simple_identifier | latex_symbol)) ~ subscript? }
   simple_identifier = _{ ASCII_ALPHA | ("\\text" ~ "{"~ nested_block ~"}") }
@@ -121,11 +122,15 @@
   div       = { "/" } // Division
   pow       = { "^" } // Exponentiation
   // prefix
-  prefix    = _{ neg | sum | prod }
+  prefix    = _{ neg | sum | prod | ddx }
   neg       = { "-" } // Negation
   sum       = { "\\sum" ~ reduction } // Summation
   // prod       = { "\\prod_" ~ reduction } // Product
   prod       = { "\\prod" ~ reduction } // Product
+  ddx       = { 
+  ("\\ddx" ~ "{" ~ identifier ~"}") 
+  | ("\\frac" ~ "{" ~ "\\partial" ~"}" ~ "{" ~ "\\partial" ~ identifier ~"}")
+  } // partial derivative
   reduction = _{ "_" ~ "{" ~ identifier ~ "=" ~ expr ~ "}" ~ "^" ~ (wrapped_digit | wrapped_ident | "{" ~ expr ~ "}" ) }
   // postfix
   postfix   = _{ fac }

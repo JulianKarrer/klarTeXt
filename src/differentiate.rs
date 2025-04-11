@@ -1,11 +1,118 @@
 use std::collections::HashSet;
 
 use crate::{
-    error::Error, eval_num, lookup_env, resolve_def::free_in_expr, utils::Either, Env, Expr, Val,
-    Vars,
+    error::Error,
+    eval_num, lookup_env,
+    resolve_def::free_in_expr,
+    simplify::{sexpr_to_expr, simplify},
+    utils::Either,
+    Env, Expr, Program, Stmt, Val, Vars,
 };
 
+pub fn apply_derivatives(prog: Program, env: &Env, fo: &HashSet<String>) -> Result<Program, Error> {
+    let mut res = vec![];
+    for stmt in prog {
+        res.push(match stmt {
+            Stmt::Definition(identifier, expr, span) => {
+                Stmt::Definition(identifier, traverse_apply_ddx(expr, env, fo)?, span)
+            }
+            Stmt::Print(expr, counter) => Stmt::Print(traverse_apply_ddx(expr, env, fo)?, counter),
+            Stmt::Simplify(expr, counter) => {
+                Stmt::Simplify(traverse_apply_ddx(expr, env, fo)?, counter)
+            }
+        })
+    }
+    Ok(res)
+}
+
+fn traverse_apply_ddx(expr: Expr, env: &Env, fo: &HashSet<String>) -> Result<Expr, Error> {
+    match expr {
+        Expr::Const(_, _) => Ok(expr),
+        Expr::Ident(_, _) => Ok(expr),
+        Expr::FnApp(name, exprs, span_info, span_info1) => Ok(Expr::FnApp(
+            name,
+            exprs
+                .into_iter()
+                .map(|expr| traverse_apply_ddx(expr, env, fo))
+                .collect::<Result<Vec<Expr>, Error>>()?,
+            span_info,
+            span_info1,
+        )),
+        Expr::Sqrt(expr, span_info) => Ok(Expr::Sqrt(
+            Box::new(traverse_apply_ddx(*expr, env, fo)?),
+            span_info,
+        )),
+        Expr::Neg(expr, span_info) => Ok(Expr::Neg(
+            Box::new(traverse_apply_ddx(*expr, env, fo)?),
+            span_info,
+        )),
+        Expr::Fac(expr, span_info) => Ok(Expr::Fac(
+            Box::new(traverse_apply_ddx(*expr, env, fo)?),
+            span_info,
+        )),
+        Expr::Root(expr, expr1, span_info, span_info1) => Ok(Expr::Root(
+            Box::new(traverse_apply_ddx(*expr, env, fo)?),
+            Box::new(traverse_apply_ddx(*expr1, env, fo)?),
+            span_info,
+            span_info1,
+        )),
+        Expr::Add(expr, expr1, span_info) => Ok(Expr::Add(
+            Box::new(traverse_apply_ddx(*expr, env, fo)?),
+            Box::new(traverse_apply_ddx(*expr1, env, fo)?),
+            span_info,
+        )),
+        Expr::Sub(expr, expr1, span_info) => Ok(Expr::Sub(
+            Box::new(traverse_apply_ddx(*expr, env, fo)?),
+            Box::new(traverse_apply_ddx(*expr1, env, fo)?),
+            span_info,
+        )),
+        Expr::Mul(expr, expr1, span_info) => Ok(Expr::Mul(
+            Box::new(traverse_apply_ddx(*expr, env, fo)?),
+            Box::new(traverse_apply_ddx(*expr1, env, fo)?),
+            span_info,
+        )),
+        Expr::IMul(expr, expr1, span_info) => Ok(Expr::IMul(
+            Box::new(traverse_apply_ddx(*expr, env, fo)?),
+            Box::new(traverse_apply_ddx(*expr1, env, fo)?),
+            span_info,
+        )),
+        Expr::Div(expr, expr1, span_info) => Ok(Expr::Div(
+            Box::new(traverse_apply_ddx(*expr, env, fo)?),
+            Box::new(traverse_apply_ddx(*expr1, env, fo)?),
+            span_info,
+        )),
+        Expr::Pow(expr, expr1, span_info) => Ok(Expr::Pow(
+            Box::new(traverse_apply_ddx(*expr, env, fo)?),
+            Box::new(traverse_apply_ddx(*expr1, env, fo)?),
+            span_info,
+        )),
+        Expr::Sum(expr, loop_var, range_inclusive, span_info) => Ok(Expr::Sum(
+            Box::new(traverse_apply_ddx(*expr, env, fo)?),
+            loop_var,
+            range_inclusive,
+            span_info,
+        )),
+        Expr::Prod(expr, loop_var, range_inclusive, span_info) => Ok(Expr::Prod(
+            Box::new(traverse_apply_ddx(*expr, env, fo)?),
+            loop_var,
+            range_inclusive,
+            span_info,
+        )),
+        Expr::Int(lower, upper, int_var, body, span_info) => Ok(Expr::Int(
+            Box::new(traverse_apply_ddx(*lower, env, fo)?),
+            Box::new(traverse_apply_ddx(*upper, env, fo)?),
+            int_var,
+            Box::new(traverse_apply_ddx(*body, env, fo)?),
+            span_info,
+        )),
+        Expr::Ddx(x, box expr, _) => {
+            ddx(&x, expr, env, fo)
+        }
+    }
+}
+
 pub fn ddx(x: &str, expr: Expr, env: &Env, fo: &HashSet<String>) -> Result<Expr, Error> {
+    println!("{}  {:?}",x,expr);
     let s = expr.span();
 
     // differentiation with respect to a constant is undefined
@@ -16,7 +123,7 @@ pub fn ddx(x: &str, expr: Expr, env: &Env, fo: &HashSet<String>) -> Result<Expr,
     // whenever the expression is closed, it can be evaluated to a number under the
     // current environment.
     // in that case, the parial derivative with respect to any variable x must be zero
-    if let Ok(_) = eval_num(&expr, env, None) {
+    if let Ok(_) = eval_num(&expr, env, None, fo) {
         return Ok(Expr::Const(Val::Num(0.), s));
     }
 
@@ -32,13 +139,15 @@ pub fn ddx(x: &str, expr: Expr, env: &Env, fo: &HashSet<String>) -> Result<Expr,
                 // d/dx[x] = 1
                 Ok(Expr::Const(Val::Num(1.), s))
             } else {
-                match lookup_env(&v, env, s)?{
-                    // name is a constant
-                    // d/dx[v] = 0
-                    Val::Num(_) => Ok(Expr::Const(Val::Num(0.), s)),
-                    // name is a function
-                    Val::Lambda(_) => Err(Error::DifferentiationError("Differentiating function values directly is currently unsupported.\nMaybe you meant to use function application?\nTry differentiating e.g. `f(x)` instead of `f`".to_owned(), s)),
-                }
+                match lookup_env(&v, env, s){
+                        // name is unknown -> bound outside the env scope, like in an integral
+                        Err(_) => Ok(Expr::Const(Val::Num(0.), s)),
+                        // name is a constant
+                        // d/dx[v] = 0
+                        Ok(Val::Num(_)) => Ok(Expr::Const(Val::Num(0.), s)),
+                        // name is a function
+                        Ok(Val::Lambda(_)) => Err(Error::DifferentiationError("Differentiating function values directly is currently unsupported.\nMaybe you meant to use function application?\nTry differentiating e.g. `f(x)` instead of `f`".to_owned(), s)),
+                    }
             }
         }
         Expr::Add(u, v, _) => {
@@ -90,7 +199,7 @@ pub fn ddx(x: &str, expr: Expr, env: &Env, fo: &HashSet<String>) -> Result<Expr,
             ))
         }
         Expr::Pow(ref u, ref v, _) => {
-            if let Ok(c) = eval_num(&v, env, None) {
+            if let Ok(c) = eval_num(&v, env, None, fo) {
                 // v=c is a constant
                 // d/dx[u^c] = c * u^(c - 1) * d/dx[u]
                 Ok(Expr::Mul(
@@ -116,7 +225,7 @@ pub fn ddx(x: &str, expr: Expr, env: &Env, fo: &HashSet<String>) -> Result<Expr,
                     Box::new(Expr::Add(
                         Box::new(Expr::Mul(
                             Box::new(dvdx),
-                            Box::new(Expr::FnApp(r"\ln".to_owned(), vec![u.clone()], s, s)),
+                            Box::new(Expr::FnApp(r"\ln".to_owned(), vec![*u.clone()], s, s)),
                             s,
                         )),
                         Box::new(Expr::Mul(
@@ -133,11 +242,7 @@ pub fn ddx(x: &str, expr: Expr, env: &Env, fo: &HashSet<String>) -> Result<Expr,
         Expr::Fac(u, _) => {
             // d/dx[Γ(u+1)] = Γ(u+1) * Ψ(u+1) * d/dx[u]
             // derivative of gamma -> product with digamma, then inner derivative as per chain rule
-            let u_plus_one = Box::new(Expr::Add(
-                u.clone(),
-                Box::new(Expr::Const(Val::Num(1.0), s)),
-                s,
-            ));
+            let u_plus_one = Expr::Add(u.clone(), Box::new(Expr::Const(Val::Num(1.0), s)), s);
             Ok(Expr::Mul(
                 Box::new(ddx(x, *u, env, fo)?),
                 Box::new(Expr::Mul(
@@ -174,7 +279,7 @@ pub fn ddx(x: &str, expr: Expr, env: &Env, fo: &HashSet<String>) -> Result<Expr,
                                             Ok(Expr::Mul(
                                                 Box::new(derivative),
                                                 // multiply with inner derivative
-                                                Box::new(ddx(x, *arg.clone(), env, fo)?),
+                                                Box::new(ddx(x, arg.clone(), env, fo)?),
                                                 s,
                                             ))
                                         } else {
@@ -208,7 +313,7 @@ pub fn ddx(x: &str, expr: Expr, env: &Env, fo: &HashSet<String>) -> Result<Expr,
                                     .try_fold(*body, |acc, (param, arg)| {
                                         substitute(
                                             param,
-                                            &*arg,
+                                            &arg,
                                             acc,
                                             env,
                                             &HashSet::from_iter(
@@ -258,7 +363,7 @@ pub fn ddx(x: &str, expr: Expr, env: &Env, fo: &HashSet<String>) -> Result<Expr,
                         s,
                     )),
                     Box::new(Expr::Mul(
-                        Box::new(Expr::FnApp(r"\ln".to_owned(), vec![v.clone()], s, s)),
+                        Box::new(Expr::FnApp(r"\ln".to_owned(), vec![*(*v).clone()], s, s)),
                         Box::new(Expr::Div(
                             Box::new(dudx),
                             Box::new(Expr::Pow(
@@ -348,11 +453,17 @@ pub fn ddx(x: &str, expr: Expr, env: &Env, fo: &HashSet<String>) -> Result<Expr,
                 ))
             }
         }
+        Expr::Ddx(y, expr, _) => {
+            // first inner partial derivative
+            let expr_new = ddx(&y, *expr, env, fo)?;
+            // then the outer one
+            ddx(x, expr_new, env, fo)
+        },
     }
 }
 
 /// Implements capture-free subsitution or alpha-renaming of the identifier `from` to the expression `to`
-fn substitute(
+pub fn substitute(
     from: &str,
     to: &Expr,
     expr: Expr,
@@ -361,9 +472,7 @@ fn substitute(
 ) -> Result<Expr, Error> {
     let s = expr.span();
     match expr {
-        // base case
         Expr::Const(_, _) => Ok(expr),
-        // interesting case
         Expr::Ident(ref name, _) => {
             if from == name {
                 Ok(to.clone())
@@ -371,7 +480,6 @@ fn substitute(
                 Ok(expr)
             }
         }
-        // avoid capture!
         Expr::FnApp(fn_name, args, _, _) => {
             match lookup_env(&fn_name, env, s)? {
                 Val::Num(_) => unreachable!(),
@@ -379,11 +487,8 @@ fn substitute(
                     // recurse into the argument expressions and rebuild a new list of arguments
                     let new_args = args
                         .into_iter()
-                        .map(|arg| substitute(from, to, *arg, env, forbidden))
-                        .collect::<Result<Vec<Expr>, Error>>()?
-                        .into_iter()
-                        .map(|arg| Box::new(arg))
-                        .collect();
+                        .map(|arg| substitute(from, to, arg, env, forbidden))
+                        .collect::<Result<Vec<Expr>, Error>>()?;
                     match func {
                         Either::Left(_) => {
                             // predefined functions dont contain identifiers except for other predefined functions
@@ -427,7 +532,7 @@ fn substitute(
                             let beta_reduced = new_params.iter().zip(new_args).try_fold(
                                 final_body,
                                 |acc, (param, arg)| {
-                                    substitute(param, &*arg, acc, env, &new_forbidden)
+                                    substitute(param, &arg, acc, env, &new_forbidden)
                                 },
                             )?;
 
@@ -437,7 +542,6 @@ fn substitute(
                 }
             }
         }
-        // recursive cases, unary
         Expr::Sqrt(expr, _) => Ok(Expr::Sqrt(
             Box::new(substitute(from, to, *expr, env, forbidden)?),
             s,
@@ -450,7 +554,6 @@ fn substitute(
             Box::new(substitute(from, to, *expr, env, forbidden)?),
             s,
         )),
-        // recursive cases, binary
         Expr::Root(expr, expr1, _, _) => Ok(Expr::Root(
             Box::new(substitute(from, to, *expr, env, forbidden)?),
             Box::new(substitute(from, to, *expr1, env, forbidden)?),
@@ -487,7 +590,6 @@ fn substitute(
             Box::new(substitute(from, to, *expr1, env, forbidden)?),
             s,
         )),
-        // special cases
         Expr::Sum(expr, loop_var, range_inclusive, _) => {
             if loop_var == from {
                 // loop variable shadows the substitution, stop here
@@ -608,6 +710,7 @@ fn substitute(
                 }
             }
         }
+        Expr::Ddx(y, expr, _) => Ok(Expr::Ddx(y, Box::new(substitute(from, to, *expr, env, forbidden)?), s))
     }
 }
 

@@ -7,20 +7,40 @@ use pest::{
 
 use crate::{
     error::{pest_err_adapter, span_merge, Error, SpanInfo},
+    simplify::SExpr,
     utils::Either,
     Expr, Program, Stmt, Val,
 };
 
+pub const fn precedence(sexpr: &SExpr) -> usize {
+    match sexpr {
+        SExpr::Add(_) => 1,
+        SExpr::Sum(_, _, _, _) => 2,
+        SExpr::Prod(_, _, _, _) => 2,
+        SExpr::Mul(_) => 3,
+        SExpr::Div(_, _) => 3,
+        SExpr::Pow(_, _) => 4,
+        SExpr::Fac(_) => 5,
+        SExpr::Neg(_) => 5,
+        // bracketed from here on
+        SExpr::FnApp(_, _) => 6,
+        SExpr::Root(_, _) => 6,
+        SExpr::Int(_, _, _, _) => 6,
+        SExpr::Const(_) => 6,
+        SExpr::Ident(_) => 6,
+    }
+}
+
 static PRATT_PARSER: LazyLock<PrattParser<Rule>> = LazyLock::new(|| {
     use Assoc::*;
     use Rule::*;
-
     PrattParser::new()
         .op(Op::infix(add, Left) | Op::infix(sub, Left))
-        .op(Op::prefix(neg) | Op::prefix(sum) | Op::prefix(prod))
+        .op(Op::prefix(sum) | Op::prefix(prod) | Op::prefix(ddx))
         .op(Op::infix(implicit, Left))
         .op(Op::infix(mul, Left) | Op::infix(div, Left))
-        .op(Op::infix(pow, Right) | Op::postfix(fac))
+        .op(Op::infix(pow, Right))
+        .op(Op::prefix(neg) | Op::postfix(fac))
 });
 
 #[derive(pest_derive::Parser)]
@@ -106,7 +126,7 @@ pub fn parse_expr(
                     let fn_name_span = (&fn_name).into();
                     let mut args = vec![];
                     for arg in p {
-                        args.push(Box::new(parse_expr(arg.into_inner(), None, src)?));
+                        args.push(parse_expr(arg.into_inner(), None, src)?);
                     }
                     Ok(Expr::FnApp(fn_name_str, args, fn_name_span, span))
                 }
@@ -153,6 +173,16 @@ pub fn parse_expr(
                 Rule::prod => {
                     let (low, high, loop_var) = parse_reduction(prefix, src)?;
                     Ok(Expr::Prod(Box::new(rhs), loop_var, low..=high, span))
+                }
+                Rule::ddx => {
+                    let rhs_span = rhs.span();
+                    let prefix_span: SpanInfo = (&prefix).into();
+                    let x = prefix.into_inner().next().unwrap().as_str().to_owned();
+                    Ok(Expr::Ddx(
+                        x,
+                        Box::new(rhs),
+                        span_merge(prefix_span, rhs_span),
+                    ))
                 }
                 _ => unreachable!(),
             }
@@ -217,6 +247,11 @@ fn parse_stmt(
             let expr = parse_expr(stmt.into_inner().next().unwrap().into_inner(), None, src)?;
             *output_counter += 1;
             Ok(Some(Stmt::Print(expr, *output_counter)))
+        }
+        Rule::simplify_statement => {
+            let expr = parse_expr(stmt.into_inner().next().unwrap().into_inner(), None, src)?;
+            *output_counter += 1;
+            Ok(Some(Stmt::Simplify(expr, *output_counter)))
         }
         Rule::definition => {
             let span = (&stmt).into();
