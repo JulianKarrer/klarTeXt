@@ -9,7 +9,7 @@ use itertools::Itertools;
 use ordered_float::OrderedFloat;
 
 use crate::{
-    differentiate::ddx, error::SpanInfo, lookup_env, parse::precedence, utils::Either, Env, Expr, PredefinedFunction, Val, Vars
+    error::SpanInfo, lookup_env, parse::precedence, utils::Either, Env, Expr, PredefinedFunction, Val, Vars
 };
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
@@ -156,10 +156,7 @@ impl Into<SExpr> for Expr {
                 res.sort();
                 SExpr::Mul(res)
             }
-            Expr::Ddx(x, expr, _) => {
-                println!("{:?}, {}", expr, x);
-                todo!()
-            },
+            Expr::Ddx(_, _, _) => unreachable!(),
         }
     }
 }
@@ -592,7 +589,6 @@ fn annihilating_ops(sexpr: SExpr, _: &Env) -> SExpr {
                         [SExpr::Neg(box ref a), &ref b] if *a == *b => true,
                         _ => false,
                     } {
-                        println!("{:?} AND {:?}", exprs[i], exprs[j]);
                         // remove upper index first to avoid the left-shift causing the wrong element
                         // to be removed
                         exprs.remove(j);

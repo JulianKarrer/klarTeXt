@@ -666,27 +666,27 @@ pub fn main() {
     let p0 = handle_errs(parse_main(&src), &src, &filename, &err_wrn_file_name);
 
     // PASS 1 - RESOLVING DEFINITIONS
-    let (p1, env, fo) = handle_errs(
+    let (p1, mut env, fo) = handle_errs(
         resolve_const_definitions(p0),
         &src,
         &filename,
         &err_wrn_file_name,
     );
-    println!("{:?}",env);
+    // println!("{:?}",env);
 
     // PASS 2 - DISAMBIGUATING FUNCTION APPLICATION AND IMPLICIT MULTIPLICATION
     // e.g. f(x+2) could be read as f*(x+2), if f is a number
     let p2 = handle_errs(disambiguate(p1, &env), &src, &filename, &err_wrn_file_name);
 
-    println!("--------P2  {:?}",p2);
+    // println!("--------P2  {:?}",p2);
     // PASS 3 - APPLY PARTIAL DERIVATIVES
     let p3 = handle_errs(
-        apply_derivatives(p2, &env, &fo),
+        apply_derivatives(p2, &mut env, &fo),
         &src,
         &filename,
         &err_wrn_file_name,
     );
-    println!("--------P3  {:?}",p3);
+    // println!("--------P3  {:?}",p3);
 
     // Run the program by interpreting the AST directly.
     // - `debug_run` writes to `stdout`

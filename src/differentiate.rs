@@ -9,7 +9,21 @@ use crate::{
     Env, Expr, Program, Stmt, Val, Vars,
 };
 
-pub fn apply_derivatives(prog: Program, env: &Env, fo: &HashSet<String>) -> Result<Program, Error> {
+pub fn apply_derivatives(prog: Program, env: &mut Env, fo: &HashSet<String>) -> Result<Program, Error> {
+    // first, resolve all partial derivatives in user-defined functions!
+    for (k, v) in env.clone(){
+        match v {
+            Val::Num(_) => {},
+            Val::Lambda(either) => match either{
+                Either::Left(_) => {},
+                Either::Right((params, box expr)) => {
+                    let ddx_reduced = traverse_apply_ddx(expr, env, fo)?;
+                    env.insert(k, Val::Lambda(Either::Right((params, Box::new(ddx_reduced)))));
+                },
+            },
+        }
+    };
+    // then, resolve ddx in statements
     let mut res = vec![];
     for stmt in prog {
         res.push(match stmt {
@@ -105,14 +119,15 @@ fn traverse_apply_ddx(expr: Expr, env: &Env, fo: &HashSet<String>) -> Result<Exp
             Box::new(traverse_apply_ddx(*body, env, fo)?),
             span_info,
         )),
-        Expr::Ddx(x, box expr, _) => {
-            ddx(&x, expr, env, fo)
+        Expr::Ddx(x, box expr, span_info) => {
+            let inner = traverse_apply_ddx(expr, env, fo)?;
+            let updated = ddx(&x, inner, env, fo)?;
+            Ok(sexpr_to_expr(simplify(&updated, env), env, span_info))
         }
     }
 }
 
 pub fn ddx(x: &str, expr: Expr, env: &Env, fo: &HashSet<String>) -> Result<Expr, Error> {
-    println!("{}  {:?}",x,expr);
     let s = expr.span();
 
     // differentiation with respect to a constant is undefined
@@ -146,7 +161,39 @@ pub fn ddx(x: &str, expr: Expr, env: &Env, fo: &HashSet<String>) -> Result<Expr,
                         // d/dx[v] = 0
                         Ok(Val::Num(_)) => Ok(Expr::Const(Val::Num(0.), s)),
                         // name is a function
-                        Ok(Val::Lambda(_)) => Err(Error::DifferentiationError("Differentiating function values directly is currently unsupported.\nMaybe you meant to use function application?\nTry differentiating e.g. `f(x)` instead of `f`".to_owned(), s)),
+                        Ok(Val::Lambda(either)) => {
+                            // TODO CHECK THE FOLLOWING ======================================
+                            match either{
+                                Either::Left(predefined) => {
+                                    if predefined.param_count == Some(1) {
+                                            // since predefined functions have no parameter names, the resonable name IS x
+                                            // -> weird effect:
+                                            // d/dx d/dy sin = 0 since the inner d/dy makes the parameter y
+                                            let arg = Expr::Ident(x.to_owned(), s);
+                                            if let Some(deriv) = predefined.derivative {
+                                                let (derivative, depends_on) =
+                                                    deriv(vec![arg.clone()], s)?;
+                                                // if the derivative relies on a overwritten predefined function, throw an error
+                                                if depends_on.iter().any(|needed| fo.contains(*needed))
+                                                {
+                                                    return Err(Error::DifferentiationError("Automatic differentiation encountered a predefined function (like `\\sin` etc.) that may have been overwritten.\nPlease don't overwrite ANY predefined functions if you want to use this feature.".to_owned(), s));
+                                                }
+                                                Ok(derivative)
+                                            } else {
+                                                Err(Error::DifferentiationError(r"A unary predefined function with no specified derivative was encountered during differentiation.".to_owned(), s))
+                                            }
+                                    } else {
+                                        Err(Error::DifferentiationError(r"Differentiating multivariate predefined functions is currently unsupported".to_owned(), s))
+                                    }
+                                },
+                                Either::Right((_, body)) => {
+                                    // use the parameter names as they are
+                                    ddx(x, *body, env, fo)
+                                },
+                            }
+                            // TODO END ======================================================
+                            // Err(Error::DifferentiationError("Differentiating function values directly is currently unsupported.\nMaybe you meant to use function application?\nTry differentiating e.g. `f(x)` instead of `f`".to_owned(), s))
+                        },
                     }
             }
         }
