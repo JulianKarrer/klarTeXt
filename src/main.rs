@@ -302,6 +302,32 @@ fn custom_mul(lhs: &Expr, rhs: &Expr, env: &Env, fo: &HashSet<String>) -> Result
     Ok(lhs_res? * rhs_res?)
 }
 
+fn factorial(val: f64) -> Option<f64> {
+    let val_int = val.round() as i64;
+    if val < 0. || (val - val_int as f64).abs() > std::f64::EPSILON {
+        let res = gamma(val);
+        if res.is_nan() {
+            None
+        } else {
+            Some(res)
+        }
+    } else {
+        // 170! is the maximum representable factorial in f64
+        // -> precalculate everything
+        const FACTORIALS: [f64; 172] = {
+            let mut facts: [f64; 172] = [1.; 172];
+            let mut i: usize = 1;
+            while i < 172 {
+                facts[i] = facts[i - 1] * i as f64;
+                i += 1
+            }
+            // 171! and onwards is note f64-representable
+            facts
+        };
+        Some(FACTORIALS[val_int.min(171) as usize])
+    }
+}
+
 /// A version of [`eval_expr`] that guarantees the returned value to be a f64 number or an error.
 /// An error to throw instead of the generic type error can be supplied.
 fn eval_num(
@@ -411,33 +437,16 @@ fn eval_expr(expr: &Expr, env: &Env, fo: &HashSet<String>) -> Result<Val, Error>
         Expr::Neg(x, _) => Ok(Val::Num(-eval_num(x, env, None, fo)?)),
         Expr::Fac(x, span) => {
             let val = eval_num(x, env, None, fo)?;
-            let val_int = val.round() as i64;
-            if val < 0. || (val - val_int as f64).abs() > std::f64::EPSILON {
-                let res = gamma(val);
+            if (val.floor() - val).abs() > f64::EPSILON {
                 WARNINGS
                     .lock()
                     .unwrap()
                     .push(Warning::FactorialIsGamma(format!("{}", val), *span));
-                if res.is_nan() {
-                    Err(Error::GammaUndefined(*span))
-                } else {
-                    Ok(Val::Num(res))
-                }
+            }
+            if let Some(res) = factorial(val) {
+                Ok(Val::Num(res))
             } else {
-                // 170! is the maximum representable factorial in f64
-                // -> precalculate everything
-                const FACTORIALS: [f64; 172] = {
-                    let mut facts: [f64; 172] = [1.; 172];
-                    let mut i: usize = 1;
-                    while i < 170 {
-                        facts[i] = facts[i - 1] * i as f64;
-                        i += 1
-                    }
-                    // 171! and onwards is note f64-representable
-                    facts[171] = f64::INFINITY;
-                    facts
-                };
-                Ok(Val::Num(FACTORIALS[val_int.min(171) as usize]))
+                Err(Error::GammaUndefined(*span))
             }
         }
         Expr::Add(lhs, rhs, _) => Ok(Val::Num(
@@ -589,7 +598,9 @@ fn debug_run(prog: Program, env: &Env, fo: &HashSet<String>) -> Result<(), Error
         match stmt {
             Stmt::Print(expr, c) => println!("{} >>> {:#?}", c, eval_expr(&expr, &env, fo)?),
             Stmt::Definition(_, _, _) => {}
-            Stmt::Simplify(expr, c) => println!("{} >>> {}", c, simplify(&expr, &env).pretty(None)),
+            Stmt::Simplify(expr, c) => {
+                println!("{} >>> {}", c, simplify(&expr, &env, fo).pretty(None))
+            }
         }
     })
 }
@@ -617,7 +628,7 @@ fn run(
                     );
                 }
                 Stmt::Simplify(expr, c) => {
-                    let res = simplify(&expr, env);
+                    let res = simplify(&expr, env, fo);
                     write_to_sibling_file(
                         filename,
                         &format!("klarTeXt_{}_{}.tex", get_file_name(filename), c),

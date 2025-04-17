@@ -1,15 +1,17 @@
 use std::{
+    collections::HashSet,
     f64::{INFINITY, NEG_INFINITY},
     fmt::Display,
     hash::{DefaultHasher, Hash, Hasher},
-    ops::{Add, Mul},
+    ops::{Add, Div, Mul, Neg},
 };
 
 use itertools::Itertools;
 use ordered_float::OrderedFloat;
 
 use crate::{
-    error::SpanInfo, lookup_env, parse::precedence, utils::Either, Env, Expr, PredefinedFunction, Val, Vars
+    error::SpanInfo, factorial, lookup_env, parse::precedence, utils::Either, Env, Expr,
+    PredefinedFunction, Val, Vars,
 };
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
@@ -181,6 +183,38 @@ impl Into<SVal> for Val {
         }
     }
 }
+impl SVal {
+    fn snap(self) -> Self {
+        match self {
+            SVal::Int(_) => self,
+            SVal::Real(x) => {
+                let x_int = x.floor();
+                if (x_int - *x).abs() < f64::EPSILON && x.is_finite() {
+                    SVal::Int(x_int as i64)
+                } else {
+                    self
+                }
+            }
+            SVal::Lambda(_) => self,
+        }
+    }
+}
+// fn sval_to_val(sval: SVal, env: &Env) -> Result<Val, Error> {
+//     match sval {
+//         SVal::Int(i) => Ok(Val::Num(i as f64)),
+//         SVal::Real(ordered_float) => Ok(Val::Num(ordered_float.into_inner())),
+//         SVal::Lambda(either) => {
+//             let span = SpanInfo::default();
+//             match either {
+//                 Either::Left(predef) => lookup_env(&predef.identifier, env, span),
+//                 Either::Right((params, box body)) => Ok(Val::Lambda(Either::Right((
+//                     params,
+//                     Box::new(sexpr_to_expr(body, env, span)),
+//                 )))),
+//             }
+//         }
+//     }
+// }
 impl Display for SVal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -401,7 +435,7 @@ impl SExpr {
 
 /// The rules to simplify expressions with.
 /// Order matters!
-const RULES: [fn(SExpr, &Env) -> SExpr; 6] = [
+const RULES: [fn(SExpr, &Env, &HashSet<String>) -> SExpr; 6] = [
     absorbing_element,
     idempotence,
     constant_fold,
@@ -413,12 +447,12 @@ const RULES: [fn(SExpr, &Env) -> SExpr; 6] = [
 /// Simplify an expression.
 /// TODO RULES:
 /// - single element sums or products are their body, with the loop variable subsituted for its single value
-pub fn simplify(expr: &Expr, env: &Env) -> SExpr {
+pub fn simplify(expr: &Expr, env: &Env, fo: &HashSet<String>) -> SExpr {
     let mut current: SExpr = expr.clone().into();
     let mut prev_hash: u64 = 0;
     loop {
         println!("SIMPLIFYING {:?}", current);
-        current = apply(current, env, &RULES);
+        current = apply(current, env, &RULES, fo);
         let new_hash = current.calculate_hash();
         if prev_hash == new_hash {
             break;
@@ -429,65 +463,76 @@ pub fn simplify(expr: &Expr, env: &Env) -> SExpr {
 }
 
 /// Traverse the [`SExpr`] AST, applying all `rules` once, bottom-up in a recursive descent.
-fn apply<F: Fn(SExpr, &Env) -> SExpr>(sexpr: SExpr, env: &Env, rules: &[F]) -> SExpr {
+fn apply<F: Fn(SExpr, &Env, &HashSet<String>) -> SExpr>(
+    sexpr: SExpr,
+    env: &Env,
+    rules: &[F],
+    fo: &HashSet<String>,
+) -> SExpr {
     // first, recurse through the ast, applying all rules to all children
     let updated = match sexpr {
         // atomic, cannot be simplified
         SExpr::Const(_) => sexpr,
         SExpr::Ident(_) => sexpr,
         // unary recursive
-        SExpr::Neg(box sexpr) => SExpr::Neg(Box::new(apply(sexpr, env, rules))),
-        SExpr::Fac(box sexpr) => SExpr::Fac(Box::new(apply(sexpr, env, rules))),
+        SExpr::Neg(box sexpr) => SExpr::Neg(Box::new(apply(sexpr, env, rules, fo))),
+        SExpr::Fac(box sexpr) => SExpr::Fac(Box::new(apply(sexpr, env, rules, fo))),
         // binary recursive
         SExpr::Div(box sexpr, box sexpr1) => SExpr::Div(
-            Box::new(apply(sexpr, env, rules)),
-            Box::new(apply(sexpr1, env, rules)),
+            Box::new(apply(sexpr, env, rules, fo)),
+            Box::new(apply(sexpr1, env, rules, fo)),
         ),
         SExpr::Pow(box sexpr, box sexpr1) => SExpr::Pow(
-            Box::new(apply(sexpr, env, rules)),
-            Box::new(apply(sexpr1, env, rules)),
+            Box::new(apply(sexpr, env, rules, fo)),
+            Box::new(apply(sexpr1, env, rules, fo)),
         ),
         SExpr::Root(box sexpr, box sexpr1) => SExpr::Root(
-            Box::new(apply(sexpr, env, rules)),
-            Box::new(apply(sexpr1, env, rules)),
+            Box::new(apply(sexpr, env, rules, fo)),
+            Box::new(apply(sexpr1, env, rules, fo)),
         ),
         // associative relations
         SExpr::Add(sexprs) => SExpr::Add(
             sexprs
                 .into_iter()
-                .map(|sexpr| apply(sexpr, env, rules))
+                .map(|sexpr| apply(sexpr, env, rules, fo))
                 .collect(),
         ),
         SExpr::Mul(sexprs) => SExpr::Mul(
             sexprs
                 .into_iter()
-                .map(|sexpr| apply(sexpr, env, rules))
+                .map(|sexpr| apply(sexpr, env, rules, fo))
                 .collect(),
         ),
         // reductions
-        SExpr::Sum(box sexpr, loop_var, lower, upper) => {
-            SExpr::Sum(Box::new(apply(sexpr, env, rules)), loop_var, lower, upper)
-        }
-        SExpr::Prod(box sexpr, loop_var, lower, upper) => {
-            SExpr::Prod(Box::new(apply(sexpr, env, rules)), loop_var, lower, upper)
-        }
+        SExpr::Sum(box sexpr, loop_var, lower, upper) => SExpr::Sum(
+            Box::new(apply(sexpr, env, rules, fo)),
+            loop_var,
+            lower,
+            upper,
+        ),
+        SExpr::Prod(box sexpr, loop_var, lower, upper) => SExpr::Prod(
+            Box::new(apply(sexpr, env, rules, fo)),
+            loop_var,
+            lower,
+            upper,
+        ),
         // others
         SExpr::FnApp(name, sexprs) => SExpr::FnApp(
             name,
             sexprs
                 .into_iter()
-                .map(|sexpr| apply(sexpr, env, rules))
+                .map(|sexpr| apply(sexpr, env, rules, fo))
                 .collect(),
         ),
         SExpr::Int(box lower, box upper, int_var, box body) => SExpr::Int(
-            Box::new(apply(lower, env, rules)),
-            Box::new(apply(upper, env, rules)),
+            Box::new(apply(lower, env, rules, fo)),
+            Box::new(apply(upper, env, rules, fo)),
             int_var,
-            Box::new(apply(body, env, rules)),
+            Box::new(apply(body, env, rules, fo)),
         ),
     };
     // then, apply the rules to the current node
-    rules.iter().fold(updated, |acc, rule| rule(acc, env))
+    rules.iter().fold(updated, |acc, rule| rule(acc, env, fo))
 }
 
 /// Remove operations when they have no effect, i.e. when the neutral element is used or the inverse is applied next.
@@ -498,7 +543,7 @@ fn apply<F: Fn(SExpr, &Env) -> SExpr>(sexpr: SExpr, env: &Env, rules: &[F]) -> S
 /// - x / 1 = x
 /// - 1st root of x = x
 /// - x ^ 1 = x
-fn idempotence(sexpr: SExpr, _: &Env) -> SExpr {
+fn idempotence(sexpr: SExpr, _: &Env, _: &HashSet<String>) -> SExpr {
     fn associative(
         mut sexprs: Vec<SExpr>,
         constructor: fn(Vec<SExpr>) -> SExpr,
@@ -525,7 +570,7 @@ fn idempotence(sexpr: SExpr, _: &Env) -> SExpr {
 /// - empty sum is zero
 /// - empty product is one
 /// - integrals with equal lower and upper bound is zero
-fn bounds_make_it_trivial(sexpr: SExpr, _: &Env) -> SExpr {
+fn bounds_make_it_trivial(sexpr: SExpr, _: &Env, _: &HashSet<String>) -> SExpr {
     match sexpr {
         // empty sum is zero
         SExpr::Add(summands) if summands.is_empty() => SExpr::Const(SVal::Int(0)),
@@ -543,7 +588,7 @@ fn bounds_make_it_trivial(sexpr: SExpr, _: &Env) -> SExpr {
 
 /// Checks for absorbing elements
 /// - zero in a multiplication
-fn absorbing_element(sexpr: SExpr, _: &Env) -> SExpr {
+fn absorbing_element(sexpr: SExpr, _: &Env, _: &HashSet<String>) -> SExpr {
     match sexpr {
         SExpr::Mul(ref sexprs)
             if sexprs.iter().any(|expr| match expr {
@@ -568,7 +613,7 @@ fn absorbing_element(sexpr: SExpr, _: &Env) -> SExpr {
 /// - x + (-x) = 0
 /// - (-x) + x = 0
 /// TODO: multiplication and division
-fn annihilating_ops(sexpr: SExpr, _: &Env) -> SExpr {
+fn annihilating_ops(sexpr: SExpr, _: &Env, _: &HashSet<String>) -> SExpr {
     match sexpr {
         SExpr::Neg(box SExpr::Neg(box x)) => x,
         SExpr::Root(box deg1, box SExpr::Pow(box x, box deg2)) if deg1 == deg2 => x,
@@ -606,7 +651,7 @@ fn annihilating_ops(sexpr: SExpr, _: &Env) -> SExpr {
 
 /// Negations in products can be reduced since only their parity matters
 /// - -5x * 2y * -6i = 5x * 2y * 6i
-fn shift_neg_out_of_mul(sexpr: SExpr, _: &Env) -> SExpr {
+fn shift_neg_out_of_mul(sexpr: SExpr, _: &Env, _: &HashSet<String>) -> SExpr {
     match sexpr {
         SExpr::Mul(sexprs)
             if sexprs.iter().any(|expr| match expr {
@@ -634,7 +679,13 @@ fn shift_neg_out_of_mul(sexpr: SExpr, _: &Env) -> SExpr {
     }
 }
 
-fn constant_fold(sexpr: SExpr, _env: &Env) -> SExpr {
+fn constant_fold(sexpr: SExpr, env: &Env, fo: &HashSet<String>) -> SExpr {
+    // let span = SpanInfo::default();
+    // if let Ok(sval) = eval_expr(&sexpr_to_expr(sexpr.clone(), env, span), env, fo) {
+    //     return SExpr::Const(sval.into());
+    // } else {
+    //     sexpr
+    // }
     match sexpr {
         SExpr::Const(_) => sexpr,
         SExpr::Ident(_) => sexpr,
@@ -642,11 +693,10 @@ fn constant_fold(sexpr: SExpr, _env: &Env) -> SExpr {
             name,
             sexprs
                 .into_iter()
-                .map(|arg| constant_fold(arg, _env))
+                .map(|arg| constant_fold(arg, env, fo))
                 .collect(),
         ),
-        SExpr::Neg(box SExpr::Const(SVal::Int(x))) => SExpr::Const(SVal::Int(-x)),
-        SExpr::Neg(box SExpr::Const(SVal::Real(x))) => SExpr::Const(SVal::Real(-x)),
+        SExpr::Neg(box SExpr::Const(ref val)) if let Some(res) = -val => SExpr::Const(res),
         SExpr::Neg(_) => sexpr,
         SExpr::Add(ref sexprs) if sexprs.len() >= 2 => match &sexprs[0..2] {
             [SExpr::Const(ref l), SExpr::Const(ref r)] if let Some(res) = l + r => {
@@ -657,6 +707,7 @@ fn constant_fold(sexpr: SExpr, _env: &Env) -> SExpr {
             }
             _ => sexpr,
         },
+        SExpr::Add(_) => sexpr,
         SExpr::Mul(ref sexprs) if sexprs.len() >= 2 => match &sexprs[0..2] {
             [SExpr::Const(ref l), SExpr::Const(ref r)] if let Some(res) = l * r => {
                 let mut res = vec![SExpr::Const(res)];
@@ -666,43 +717,142 @@ fn constant_fold(sexpr: SExpr, _env: &Env) -> SExpr {
             }
             _ => sexpr,
         },
+        SExpr::Mul(_) => sexpr,
+        SExpr::Div(box SExpr::Const(lhs), box SExpr::Const(rhs)) if let Some(res) = &lhs / &rhs => {
+            SExpr::Const(res)
+        }
+        SExpr::Div(_, _) => sexpr,
+        SExpr::Pow(box SExpr::Const(lhs), box SExpr::Const(rhs))
+            if let Some(res) = lhs.pow(&rhs) =>
+        {
+            SExpr::Const(res)
+        }
+        SExpr::Pow(_, _) => sexpr,
+        SExpr::Root(box SExpr::Const(ref deg), box SExpr::Const(ref rad))
+            if let Some(exp) = deg.invert() =>
+        {
+            match rad.pow(&exp) {
+                Some(res) => SExpr::Const(res),
+                None => sexpr,
+            }
+        }
+        SExpr::Root(_, _) => sexpr,
+        SExpr::Fac(box SExpr::Const(val)) if let Some(res) = val.fact() => SExpr::Const(res),
+        SExpr::Fac(_) => sexpr,
+        // SExpr::Sum(sexpr, _, _, _) => todo!(),
+        // SExpr::Prod(sexpr, _, _, _) => todo!(),
+        // SExpr::Int(sexpr, sexpr1, _, sexpr2) => todo!(),
         _ => sexpr,
+    }
+}
+
+fn sval_binop<T: Fn(f64, f64) -> f64>(
+    lhs: &SVal,
+    rhs: &SVal,
+    op_r: T,
+    op_i: Option<Box<dyn Fn(i64, i64) -> i64>>,
+) -> Option<SVal> {
+    match lhs {
+        SVal::Int(l) => match rhs {
+            SVal::Int(r) if let Some(op_i) = op_i => Some(SVal::Int(op_i(*l, *r))),
+            SVal::Int(r) => Some(SVal::Real(OrderedFloat(op_r(*l as f64, *r as f64))).snap()),
+            SVal::Real(r) => Some(SVal::Real(op_r(*l as f64, **r).into()).snap()),
+            SVal::Lambda(_) => None,
+        },
+        SVal::Real(l) => match rhs {
+            SVal::Int(r) => Some(SVal::Real(OrderedFloat(op_r(**l, *r as f64))).snap()),
+            SVal::Real(r) => Some(SVal::Real((op_r(**l, **r)).into()).snap()),
+            SVal::Lambda(_) => None,
+        },
+        SVal::Lambda(_) => None,
+    }
+}
+
+impl SVal {
+    fn pow(&self, rhs: &SVal) -> Option<SVal> {
+        match self {
+            SVal::Int(l) => match rhs {
+                SVal::Int(r) if *r >= 0 => {
+                    if let Ok(r) = (*r).try_into() {
+                        Some(SVal::Int((*l).pow(r)))
+                    } else {
+                        Some(SVal::Real(((*l as f64).powf(*r as f64)).into()).snap())
+                    }
+                }
+                SVal::Int(r) => Some(SVal::Real(((*l as f64).powf(*r as f64)).into()).snap()),
+                SVal::Real(r) => Some(SVal::Real(((*l as f64).powf(**r)).into()).snap()),
+                SVal::Lambda(_) => None,
+            },
+            SVal::Real(l) => match rhs {
+                SVal::Int(r) if let Ok(r) = (*r).try_into() => {
+                    Some(SVal::Real((**l).powi(r).into()).snap())
+                }
+                SVal::Int(r) => Some(SVal::Real((**l).powf(*r as f64).into()).snap()),
+                SVal::Real(r) => Some(SVal::Real(((*l).powf(**r)).into()).snap()),
+                SVal::Lambda(_) => None,
+            },
+            SVal::Lambda(_) => None,
+        }
+    }
+
+    fn invert(&self) -> Option<SVal> {
+        match self {
+            SVal::Int(0) => None,
+            SVal::Int(1) => Some(SVal::Int(1)),
+            SVal::Int(i) => Some(SVal::Real((1. / (*i as f64)).into())),
+            SVal::Real(x) => Some(SVal::Real((1. / **x).into())),
+            SVal::Lambda(_) => None,
+        }
+    }
+
+    fn fact(&self) -> Option<SVal> {
+        match self {
+            SVal::Int(i) if 0 <= *i && *i < 20 => Some(SVal::Int((1..=*i).product())),
+            SVal::Int(x) if let Some(res) = factorial(*x as f64) => {
+                Some(SVal::Real(res.into()).snap())
+            }
+            SVal::Real(x) if let Some(res) = factorial(**x) => Some(SVal::Real(res.into()).snap()),
+            SVal::Real(_) => None,
+            SVal::Int(_) => None,
+            SVal::Lambda(_) => None,
+        }
     }
 }
 
 impl Add for &SVal {
     type Output = Option<SVal>;
     fn add(self, rhs: Self) -> Self::Output {
-        match self {
-            SVal::Int(l) => match rhs {
-                SVal::Int(r) => Some(SVal::Int(l + r)),
-                SVal::Real(r) => Some(SVal::Real((*l as f64 + **r).into())),
-                SVal::Lambda(_) => None,
-            },
-            SVal::Real(l) => match rhs {
-                SVal::Int(r) => Some(SVal::Real(l + *r as f64)),
-                SVal::Real(r) => Some(SVal::Real((*l + *r).into())),
-                SVal::Lambda(_) => None,
-            },
-            SVal::Lambda(_) => None,
-        }
+        sval_binop(self, rhs, |a, b| a + b, Some(Box::new(|a, b| a + b)))
     }
 }
 
 impl Mul for &SVal {
     type Output = Option<SVal>;
     fn mul(self, rhs: Self) -> Self::Output {
+        match (self, rhs) {
+            (SVal::Int(0), _) => Some(SVal::Int(0)),
+            (_, SVal::Int(0)) => Some(SVal::Int(0)),
+            (SVal::Real(x), _) if x.abs() < f64::EPSILON => Some(SVal::Int(0)),
+            (_, SVal::Real(x)) if x.abs() < f64::EPSILON => Some(SVal::Int(0)),
+            _ => sval_binop(self, rhs, |a, b| a * b, Some(Box::new(|a, b| a * b))),
+        }
+    }
+}
+
+impl Div for &SVal {
+    type Output = Option<SVal>;
+
+    fn div(self, rhs: Self) -> Self::Output {
+        sval_binop(self, rhs, |a, b| a / b, None)
+    }
+}
+
+impl Neg for &SVal {
+    type Output = Option<SVal>;
+    fn neg(self) -> Self::Output {
         match self {
-            SVal::Int(l) => match rhs {
-                SVal::Int(r) => Some(SVal::Int(l * r)),
-                SVal::Real(r) => Some(SVal::Real((*l as f64 * **r).into())),
-                SVal::Lambda(_) => None,
-            },
-            SVal::Real(l) => match rhs {
-                SVal::Int(r) => Some(SVal::Real(l * *r as f64)),
-                SVal::Real(r) => Some(SVal::Real((*l * *r).into())),
-                SVal::Lambda(_) => None,
-            },
+            SVal::Int(x) => Some(SVal::Int(-x)),
+            SVal::Real(ordered_float) => Some(SVal::Real(-ordered_float).snap()),
             SVal::Lambda(_) => None,
         }
     }

@@ -51,8 +51,11 @@ pub enum Error {
     IntegralInternalErr(String, SpanInfo),
     // DIFFERENTIATION ----------------
     DifferentiationError(String, SpanInfo),
-    // WEIRD SHIT ---------------------
+    // OTHERS -------------------------
     DuplicateParamName(String, SpanInfo),
+    /// This error must not be handled and is intended for detecting
+    /// when an error WOULD occur
+    _ErrorInternal(),
 }
 
 #[derive(Debug)]
@@ -245,6 +248,7 @@ impl ErrReportable for Error {
             Error::DifferentiationError(_, span_info) => span_info.into(),
             Error::GammaUndefined(span_info) => span_info.into(),
             Error::DuplicateParamName(_, span_info) => span_info.into(),
+            Error::_ErrorInternal() => panic!(),
         }
     }
 
@@ -317,6 +321,7 @@ impl ErrReportable for Error {
                 self.span(),
                 format!("the parameter name {} is used multiple times", name),
             )],
+            Error::_ErrorInternal() => panic!(),
         }
     }
 
@@ -346,6 +351,7 @@ impl ErrReportable for Error {
             Error::DifferentiationError(_, _) => "Unable to differentiate".to_owned(),
             Error::GammaUndefined(_) => "Undefined Gamma Function".to_owned(),
             Error::DuplicateParamName(_, _) => "Duplicate Parameter Name".to_owned(),
+            Error::_ErrorInternal() => panic!(),
         }
     }
 
@@ -371,6 +377,7 @@ impl ErrReportable for Error {
             Error::DifferentiationError(err, _) => format!("There was an error during automatic differentiation:\n{}\n\nWorst-case, just differentiate your expression by hand?", err),
             Error::GammaUndefined(_) => "The Gamma function Γ that generalizes the factorial ! was evoked where it is undefined.\nNote that the gamma function is undefined for negative integers and zero.".into(),
             Error::DuplicateParamName(_, _) => "You cannot use the same parameter name twice in the same signature.\nFor example `f(x,x,y)=...` is forbidden, since it is unclear what that would mean.".into(),
+            Error::_ErrorInternal() => panic!(),
         }
     }
 }

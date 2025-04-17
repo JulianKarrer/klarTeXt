@@ -5,7 +5,7 @@
 \newcounter{klarCall}
 \newcommand{\callKlarTeXt}{%
   \immediate\write18{%
-    klarTeXt "$(realpath \jobname.tex)" true%
+    ../target/release/klarTeXt "$(realpath \jobname.tex)" true%
   }%
   \checkKlarTeXtError%
   \checkKlarTeXtWarnings%
