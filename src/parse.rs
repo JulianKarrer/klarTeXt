@@ -6,8 +6,8 @@ use pest::{
 };
 
 use crate::{
+    ast::SExpr,
     error::{pest_err_adapter, span_merge, Error, SpanInfo},
-    simplify::SExpr,
     utils::Either,
     Expr, Program, Stmt, Val,
 };

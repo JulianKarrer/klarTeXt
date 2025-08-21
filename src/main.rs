@@ -1,11 +1,12 @@
 #![feature(box_patterns)]
 #![feature(if_let_guard)]
+#![feature(let_chains)]
 
+use ast::{Expr, Stmt, Typ, Val};
 use differentiate::{apply_derivatives, ddx};
 use disambiguate_fnapp::disambiguate;
 use error::{handle_errs, span_merge, Error, SpanInfo, Warning, WARNINGS};
 use io::{delete_matching_files, get_file_name, write_to_sibling_file};
-use itertools::Itertools;
 use parse::parse_main;
 use peroxide::fuga::{gamma, integrate};
 use predefined::PREDEFINED;
@@ -15,12 +16,10 @@ use utils::Either;
 
 use std::{
     collections::{HashMap, HashSet},
-    f64::{self, INFINITY, NEG_INFINITY},
-    fmt::{Debug, Display},
     fs,
     ops::RangeInclusive,
-    sync::Arc,
 };
+mod ast;
 mod differentiate;
 mod disambiguate_fnapp;
 mod error;
@@ -33,254 +32,6 @@ mod utils;
 
 type Program = Vec<Stmt>;
 type Env = HashMap<String, Val>;
-
-#[derive(Debug)]
-enum Stmt {
-    Definition(String, Expr, SpanInfo),
-    Print(Expr, i64),
-    Simplify(Expr, i64),
-}
-
-#[derive(Debug, Clone)]
-/// An expression.
-///
-/// This is the main AST object of the implementation that results from parsing
-/// and evaluates to a [`Val`] during interpretation.
-enum Expr {
-    /// a constant value
-    Const(Val, SpanInfo),
-    /// an identifier
-    Ident(String, SpanInfo),
-    /// function application, like f(x), defined by
-    /// - the function name (e.g. f)
-    /// - the list of argument expressions
-    /// - the span of the function name
-    /// - the span of the arguments
-    ///
-    /// ATTENTION
-    /// This could also represent an implicit multiplication since e.g. f(x+2)
-    /// is ambigous until the type of f (number or function?) is known.
-    /// [`Expr::FnApp`] might be interpreted as IMul in eval, since the input grammar is
-    /// context free but this problem is context sensitive.
-    /// This ambiguity is resolved in the [`disambiguate`] pass.
-    FnApp(String, Vec<Expr>, SpanInfo, SpanInfo),
-
-    /// the square root of a number
-    Sqrt(Box<Expr>, SpanInfo),
-    /// the general n-th root of a number, where n need not be an integer defined by:
-    /// - the expression that evaluates to the degree
-    /// - the expression that evaluates to the radicant
-    /// - the span of the degree expression
-    /// - the span of the radicant expression
-    /// this defines the x-th root of y as y^(1/x), throwing an error for the zero-th root
-    Root(Box<Expr>, Box<Expr>, SpanInfo, SpanInfo),
-    /// unary, prefix negation of an expression
-    Neg(Box<Expr>, SpanInfo),
-    /// unary, postifx factorial of an integer expression.
-    /// for non-integers, a gamma function is appropriate and an error is thrown
-    Fac(Box<Expr>, SpanInfo),
-
-    /// addition of two expressions
-    Add(Box<Expr>, Box<Expr>, SpanInfo),
-    /// subtraction of two expressions
-    Sub(Box<Expr>, Box<Expr>, SpanInfo),
-    /// addition of two expressions
-    Mul(Box<Expr>, Box<Expr>, SpanInfo),
-    /// implicit multiplication of two expressions
-    /// without a multiplication symbol (e.g. 2x, not 2\cdot x)
-    IMul(Box<Expr>, Box<Expr>, SpanInfo),
-    /// divison of two expressions, can throw an error for x/0
-    Div(Box<Expr>, Box<Expr>, SpanInfo),
-    /// exponentiation of two expressions
-    /// can throw an error for x<0, 0<=y<1, x^{1/y} -> complex results
-    Pow(Box<Expr>, Box<Expr>, SpanInfo),
-
-    /// sigma-symbol sum, i.e.
-    /// - an expression body
-    /// - a loop variable closing that expression
-    /// - a range of integer values for the loop variable to take on
-    Sum(Box<Expr>, String, RangeInclusive<i64>, SpanInfo),
-
-    /// pi-symbol product, i.e.
-    /// - an expression body
-    /// - a loop variable closing that expression
-    /// - a range of integer values for the loop variable to take on
-    Prod(Box<Expr>, String, RangeInclusive<i64>, SpanInfo),
-
-    /// numeric integration of a R (\times R)* -> R function, i.e.
-    /// - an expression for the lower limit of the integration variable
-    /// - an expression for the upper limit of the integration variable
-    /// - the name of the single integration variable
-    /// - the body expression that is closed by the integration variable
-    ///
-    /// Uses G7K15 quadrature with 1e-4 relative error at 20 points.
-    /// Multidimensional integration is possible by nesting this construct.
-    Int(Box<Expr>, Box<Expr>, String, Box<Expr>, SpanInfo),
-
-    /// a partial derivative consisting of
-    /// - a variable name to differentiate with respect to
-    /// - an expression to differenciate
-    Ddx(String, Box<Expr>, SpanInfo),
-}
-
-impl Display for Expr {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Expr::Const(val, _) => write!(f, "{}", val),
-            Expr::Ident(name, _) => write!(f, "{}", name),
-            Expr::FnApp(func_name, args, _, _) => {
-                let args_str: String = args.iter().map(|expr| format!("{}", expr)).join(", ");
-                write!(f, r"{}\left({}\right)", func_name, args_str)
-            }
-            Expr::Sqrt(expr, _) => write!(f, r"\sqrt{{ {} }}", expr),
-            Expr::Root(degree, radicant, _, _) => write!(f, r"\sqrt[{}]{{ {} }}", degree, radicant),
-            Expr::Neg(expr, _) => write!(f, r"\left(-{}\right)", expr),
-            Expr::Fac(expr, _) => write!(f, r"\left({}!\right)", expr),
-            Expr::Add(expr, expr1, _) => write!(f, r"\left({} + {}\right)", expr, expr1),
-            Expr::Sub(expr, expr1, _) => write!(f, r"\left({} - {}\right)", expr, expr1),
-            Expr::Mul(expr, expr1, _) => write!(f, r"\left({} \cdot {}\right)", expr, expr1),
-            Expr::IMul(expr, expr1, _) => write!(f, r"\left({} {}\right)", expr, expr1),
-            Expr::Div(expr, expr1, _) => write!(f, r"\frac{{ {} }}{{ {} }}", expr, expr1),
-            Expr::Pow(expr, expr1, _) => write!(f, r"{}^{{ {} }}", expr, expr1),
-            Expr::Sum(expr, loop_var, range, _) => write!(
-                f,
-                r"\sum_{{ {} = {} }}^{{ {} }}\left({}\right)",
-                loop_var,
-                range.start(),
-                range.end(),
-                expr
-            ),
-            Expr::Prod(expr, loop_var, range, _) => write!(
-                f,
-                r"\prod_{{ {} = {} }}^{{ {} }}\left({}\right)",
-                loop_var,
-                range.start(),
-                range.end(),
-                expr
-            ),
-            Expr::Int(lower, upper, int_var, body, _) => write!(
-                f,
-                r"\int_{{ {} }}^{{ {} }}\left({}\right)\,d{}",
-                lower, upper, body, int_var
-            ),
-            Expr::Ddx(x, expr, _) => write!(
-                f,
-                r"\frac{{\partial}}{{\partial {} }} \left({}\right)",
-                x, expr
-            ),
-        }
-    }
-}
-
-#[derive(Clone)]
-struct PredefinedFunction {
-    closure: Arc<dyn Fn(Vec<Val>, &Env, SpanInfo) -> Result<Val, Error> + Send + Sync>,
-    identifier: String,
-    /// `param_count` is None if any number of arguments is taken
-    param_count: Option<usize>,
-    derivative: Option<
-        Arc<dyn Fn(Vec<Expr>, SpanInfo) -> Result<(Expr, Vec<&'static str>), Error> + Send + Sync>,
-    >,
-}
-impl Display for PredefinedFunction {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, r"{}", self.identifier)
-    }
-}
-
-#[derive(Clone)]
-/// The value that an expression evaluates to.
-enum Val {
-    /// numeric value represented as `f64`
-    Num(f64),
-    /// Lambda containing:
-    /// - parameter names (empty vector if it is a predefined function)
-    /// - either:
-    ///   - the body of the function
-    ///   - or a closure representing a predefined function as well as its name
-    /// A negative argument count allows any number of arguments
-    Lambda(Either<PredefinedFunction, (Vec<String>, Box<Expr>)>),
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-/// create infinite x_i variable names
-struct Vars {
-    counter: usize,
-}
-impl Iterator for Vars {
-    type Item = String;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.counter += 1;
-        Some(format!(r"x_{{ {} }}", self.counter))
-    }
-}
-
-enum Typ {
-    Num,
-    Lam,
-}
-impl Into<Typ> for Val {
-    fn into(self) -> Typ {
-        match self {
-            Val::Num(_) => Typ::Num,
-            Val::Lambda(_) => Typ::Lam,
-        }
-    }
-}
-impl Into<Typ> for &Val {
-    fn into(self) -> Typ {
-        match self {
-            Val::Num(_) => Typ::Num,
-            Val::Lambda(_) => Typ::Lam,
-        }
-    }
-}
-impl Typ {
-    pub fn name(&self) -> String {
-        match self {
-            Self::Num => "number".to_owned(),
-            Self::Lam => "function".to_owned(),
-        }
-    }
-}
-impl Display for Val {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Val::Num(INFINITY) => write!(f, r"\infty"),
-            Val::Num(NEG_INFINITY) => write!(f, r"-\infty"),
-            Val::Num(x) => write!(f, "{}", snap_to_int(*x)),
-            Val::Lambda(func) => match func {
-                Either::Left(predef) => {
-                    if let Some(count) = predef.param_count {
-                        if count > 0 {
-                            let params = Vars::default().into_iter().take(count).join(", ");
-                            return write!(
-                                f,
-                                r"{} \\mapsto {}\left({}\right)",
-                                params, predef.identifier, params
-                            );
-                        }
-                    };
-                    write!(f, "{}", predef)
-                }
-                Either::Right((params, expr)) => {
-                    if params.is_empty() {
-                        write!(f, "{}", expr)
-                    } else {
-                        write!(f, "{} \\mapsto {}", params.join(", "), expr)
-                    }
-                }
-            },
-        }
-    }
-}
-
-impl Debug for Val {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self)
-    }
-}
 
 /// Multiplication that defines zero to be the absorbing element even if the respective other argument is undefined. This allows expressions like `0 + \frac{5}{0}` to evaluate to `0`.
 fn custom_mul(lhs: &Expr, rhs: &Expr, env: &Env, fo: &HashSet<String>) -> Result<f64, Error> {
@@ -567,21 +318,6 @@ fn eval_reduction<R: Fn(f64, f64) -> f64>(
         res = reduction_op(res, update);
     }
     Ok(Val::Num(res))
-}
-
-fn snap_to_int(val: f64) -> f64 {
-    // if distance to next integer is below the f64 precision limit,
-    // round
-    if (val.round() - val).abs() < f64::EPSILON {
-        // additionally, avoid -0.0
-        if val.abs() < f64::EPSILON {
-            0.
-        } else {
-            val.round()
-        }
-    } else {
-        val
-    }
 }
 
 /// Print debug information to `stdout` while executing the program instead of writing results to output files.

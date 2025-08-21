@@ -10,9 +10,10 @@ use std::{
 use peroxide::fuga::{gamma, phi};
 
 use crate::{
+    ast::PredefinedFunction,
     error::{lambda_arg_err, Error, SpanInfo},
     utils::Either,
-    Env, Expr, PredefinedFunction, Typ, Val,
+    Env, Expr, Typ, Val,
 };
 
 /// This wrapper conveniently creates a `Val::Lambda` for defining built-in unary functions

@@ -1,12 +1,13 @@
 use std::collections::HashSet;
 
 use crate::{
+    ast::sexpr_to_expr,
     error::Error,
     eval_num, lookup_env,
     resolve_def::free_in_expr,
-    simplify::{sexpr_to_expr, simplify},
-    utils::Either,
-    Env, Expr, Program, Stmt, Val, Vars,
+    simplify::simplify,
+    utils::{Either, Vars},
+    Env, Expr, Program, Stmt, Val,
 };
 
 pub fn apply_derivatives(
