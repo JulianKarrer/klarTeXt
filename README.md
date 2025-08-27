@@ -104,11 +104,12 @@ The following set of rules is used repeatedly and recursively:
 </picture>
 </p>
 
-where n is constant with respect to x. If n cannot statically be proven to be different from -1, since for example it occurs open in a term of a function body, some rules cannot be applied.
+where n is constant with respect to x. If n cannot statically be proven to be different from -1, since for example it occurs open in a term of a function body, some rules cannot be applied. 
+Be aware that these rules are problematic for diverging integrals and functions with singularities - klarTeXt would currently simplify `int_{-1}^{2} \frac{1}{x} \,dx` to `\ln(2) - \ln(1)`.
 
 
 ## Simplification
-The following rules for simplification of terms, including open terms with free variables, are implemented. Where the symmetric case of a rule applies due to commutativity, this should also be implemented.
+The following rules for simplification of terms, including open terms with free variables, are implemented. Where the symmetric case of a rule applies due to commutativity, this is taken care of.
 
 <p align="center">
 <picture width="min(600px, 80%)">
@@ -117,7 +118,7 @@ The following rules for simplification of terms, including open terms with free 
 </picture>
 </p>
 
-The above rules for analytically solvable integrals and constant folding (if subexpressions are values, evaluate the entire expression, e.g. `5 + 7' becomes `12' while `5x' remains `5x') are also implemented.
+The above rules for analytically solvable integrals and constant folding (if subexpressions are values, evaluate the entire expression, e.g. `5 + 7` becomes `12` while `5x` remains `5x`) are also implemented.
 
 <!-- ## Mission
 
