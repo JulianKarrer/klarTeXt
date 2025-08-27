@@ -136,6 +136,7 @@ fn traverse_apply_ddx(expr: Expr, env: &Env, fo: &HashSet<String>) -> Result<Exp
 }
 
 pub fn ddx(x: &str, expr: Expr, env: &Env, fo: &HashSet<String>) -> Result<Expr, Error> {
+    // the span does not have much meaning outside of error reporting
     let s = expr.span();
 
     // differentiation with respect to a constant is undefined
@@ -150,7 +151,6 @@ pub fn ddx(x: &str, expr: Expr, env: &Env, fo: &HashSet<String>) -> Result<Expr,
         return Ok(Expr::Const(Val::Num(0.), s));
     }
 
-    // this span does not have much meaning outside of error reporting
     match expr {
         Expr::Const(_c, _) => {
             // d/dx[c] = 0

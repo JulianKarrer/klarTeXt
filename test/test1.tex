@@ -15,16 +15,21 @@
 \subsection*{Test}
 \begin{program}
     \begin{align*}
-        f(x,i) = \int_{i}^{2i} \arccos(x^t)\,dt \\
-        \print{f\left(\frac{1}{2}, 5\right)}\\
-        \simplify{\ddx{x} f}\\
-        \simplify{2xy + x\cdot 5y}\\
-        \simplify{x \cdot x^3 x x x x x x + y y^5}\\
-        \simplify{x^2 x^5}\\
-        \simplify{1 + 2x^8 + 5\cdot 2+ 5 \cdot 3 + 5 \cdot 4}\\
-        \simplify{5xy + 5xy}\\
-        \simplify{2x + x + 5xy + \frac{0}{5} + xy \cdot xy + 3x \cdot 4x}\\
-        \simplify{15\cdot\frac{0}{xyz}}
+        \simplify{\int_{0}^{2\pi} {\ddx{x}\sin(x)} + \sin(x) + 5 \,dx} \\
+        \simplify{\int_{-e}^{2\pi} (\sum_{i=2}^{5} \frac{x}{i})\,dx}   \\
+        \simplify{\int_{0}^{\pi} \Phi(x) \,dx}                         \\
+        % \simplify{\int_{-1}^{5} \exp(x) + 2xy \,dx}                    \\
+        % \simplify{\int_{-1}^{5} 2xy  \,dx}                             \\
+        % f(x,i) = \int_{i}^{2i} \arccos(x^t)\,dt \\
+        % \print{f\left(\frac{1}{2}, 5\right)}\\
+        % \simplify{\ddx{x} f}\\
+        % \simplify{2xy + x\cdot 5y}\\
+        % \simplify{x \cdot x^3 x x x x x x + y y^5}\\
+        % \simplify{x^2 x^5}\\
+        % \simplify{1 + 2x^8 + 5\cdot 2+ 5 \cdot 3 + 5 \cdot 4}\\
+        % \simplify{5xy + 5xy}\\
+        % \simplify{2x + x + 5xy + \frac{0}{5} + xy \cdot xy + 3x \cdot 4x}\\
+        % \simplify{15\cdot\frac{0}{xyz}}
         % f(x,y,\rho) = \frac{1}{2}(x-1)^2 + \frac{1}{2}y^2+\rho\frac{1}{2}(y-\cos(x))^2\\
         % \simplify{\ddx{x} f}\\
         % \simplify{\ddx{y} f}\\
@@ -35,6 +40,67 @@
     \end{align*}
 \end{program}
 
+
+
+\newpage
+\subsection*{Symbolic integration}
+Integrals are first attempted to be symbolically integrated - if symbolic integration fails, definite integrals are numerically evaluated using Gauss-Kronrod G7K15 quadrature.
+The following set of rules is used repeatedly and recursively:
+\begin{align*}
+    \int n \,dx                     & = x n + C                                                    & \text{constants}                           \\
+    \int -f(x) \,dx                 & = - \int f(x) \,dx                                           & \text{negatives}                           \\
+    \int f(x) + g(x) \,dx           & = \int f(x) \,dx  + \int g(x) \,dx                           & \text{sums}                                \\
+    \int \sum_{i=a}^{b} f(x,i) \,dx & = \sum_{i=a}^{b} \int f(x,i) \,dx                            & \text{$\Sigma$-sums}                       \\
+    \int \sum_{x=a}^{b} f(x) \,dx   & = x \left(\sum_{i=a}^{b} \int f(x)\right) +C                 & \text{shadowing $\Sigma$-sums}             \\
+    \int \prod_{x=a}^{b} f(x) \,dx  & = x \left(\prod_{i=a}^{b} \int f(x)\right) +C                & \text{shadowing $\prod$-products}          \\
+    \int \frac{f(x)}{g(y)} \,dx     & = \frac{1}{g(y)} \int f(x) \,dx                              & \text{fractions}                           \\
+    \int \frac{n}{x} \,dx           & = n \ln(x)     +C                                            & \text{}                                    \\
+    \int x^{n} \,dx                 & = \frac{x^{n+1}}{n+1}                                        & \text{if $n\neq -1$}                       \\
+    \int \sqrt[n]{x} \,dx           & =  \frac{n}{n+1} x^{\frac{n+1}{n}}                           & \text{if $n\neq -1$}                       \\
+    \int \sin(x) \,dx               & = -\cos(x)                                       + C         & \text{trigonometric functions}             \\
+    \int \cos(x) \,dx               & = \sin(x)                                        + C         & \text{}                                    \\
+    \int \tan(x) \,dx               & = -\frac{\ln\left(\cos(x)^2\right)}{2}           + C         & \text{}                                    \\
+    \int \arcsin(x) \,dx            & = x \arcsin(x) + \sqrt{1 - x^2}                  + C         & \text{inverse trigonometric functions}     \\
+    \int \arccos(x) \,dx            & = x \arccos(x) - \sqrt{1 - x^2}                  + C         & \text{}                                    \\
+    \int \arctan(x) \,dx            & = x \arctan(x) - \frac{\ln\left(x^2+1\right)}{2} + C         & \text{}                                    \\
+    \int \sinh(x) \,dx              & = \cosh(x)                                       + C         & \text{hyperbolic functions}                \\
+    \int \cosh(x) \,dx              & = \sinh(x)                                       + C         & \text{}                                    \\
+    \int \tanh(x) \,dx              & = \ln\left(\cosh(x)\right)                       + C         & \text{}                                    \\
+    \int \ln(x) \,dx                & = x \left(\ln(x) - 1\right)                      + C         & \text{logarithms}                          \\
+    \int \lg(x) \,dx                & = \frac{x}{\ln(10)} \left(\ln(x) - 1\right)      + C         & \text{}                                    \\
+    \int \exp(x) \,dx               & = \exp(x)                                        + C         & \text{exponentials}                        \\
+    \int \Theta(x) \,dx             & = x \Theta(x)                                    + C         & \text{Heaviside Theta}                     \\
+    \int \Phi(x) \,dx               & = x \Phi(x) + \frac{1}{\sqrt{2\pi}} \exp(-\frac{x^2}{2}) + C & \text{CDF of standard normal distribution} \\
+\end{align*}
+where n is constant with respect to x. If n cannot statically be proven to be different from -1, since for example it occurs open in a term of a function body, some rules cannot be applied.
+
+
+\subsection*{Simplicification}
+The following rules for simplification of terms, including open terms with free variables, are implemented. Where the symmetric case of a rule applies due to commutativity, this should also be implemented.
+\begin{align*}
+    x \cdot 0 \cdot y              & = 0                                  & \text{absorbing elements}            \\
+    x + 0                          & = x                                  & \text{neutral elements}              \\
+    x \cdot 1                      & = x                                  &                                      \\
+    \frac{x}{1}                    & = x                                  &                                      \\
+    \sqrt[1]{x}                    & = x                                  &                                      \\
+    x^1                            & = x                                  &                                      \\
+    ax + bx = (a+b)x               & = x                                  & \text{combining like terms}          \\
+    x^a + x^b = x^{a+b}            & = x                                  &                                      \\
+    \forall a>b:\, \sum_{a}^{b} x  & = 0                                  & \text{empty sums and products}       \\
+    \forall a>b:\, \prod_{a}^{b} x & = 1                                  &                                      \\
+    -(-x)                          & = x                                  & \text{operations that cancel}        \\
+    \sqrt[y]{x^y}                  & = x                                  & \textit{roots and powers}            \\
+    \left(\sqrt[y]{x}\right)^y     & = x                                  &                                      \\
+    x + (-x)                       & = 0                                  & \textit{plus and minus}              \\
+    (-x) + x                       & = 0                                  &                                      \\
+    x \cdot \frac{a}{x}            & = a                                  & \textit{multiplication and division} \\
+    -5x \cdot 2y \cdot (-6i)       & = 5x \cdot 2y \cdot 6i               & \text{parity of minus in products}   \\
+    -5x \cdot (-2y) \cdot (-6i)    & = -\left(5x \cdot 2y \cdot 6i\right) & \textit{even or odd number of $-$}   \\
+    x^0                            & = 1                                  & \text{trivial due to argument}       \\
+    \frac{x}{x}                    & = 1                                  &                                      \\
+    \frac{0}{x}                    & = 0                                  &                                      \\
+\end{align*}
+The above rules for analytically solvable integrals and constant folding (if subexpressions are values, evaluate the entire expression, e.g. `5 + 7' becomes `12' while `5x' remains `5x') are also implemented.
 
 % \subsection*{Integrals}
 

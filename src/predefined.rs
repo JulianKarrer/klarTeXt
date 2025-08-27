@@ -10,7 +10,7 @@ use std::{
 use peroxide::fuga::{gamma, phi};
 
 use crate::{
-    ast::PredefinedFunction,
+    ast::{cnst, PredefinedFunction, SExpr},
     error::{lambda_arg_err, Error, SpanInfo},
     utils::Either,
     Env, Expr, Typ, Val,
@@ -427,6 +427,84 @@ pub static PREDEFINED: LazyLock<Env> = LazyLock::new(|| {
         ),
     ])
 });
+
+/// This function computes the antiderivatives of some predefined unary functions.
+/// the `args` vector is expected to have one entry, which is a [`SExpr::Ident`],
+/// i.e. the integration variable.
+///
+/// The following rules are implemented:
+/// -  ∫ sin(x) dx = -cos(x) + C
+/// -  ∫ cos(x) dx = sin(x) + C
+/// -  ∫ tan(x) dx = -ln(|cos(x)|) + C = -1/2 ln(cos(x) cos(x)) + C
+/// -  ∫ arcsin(x) dx = x arcsin(x) + √(1 - x²) + C
+/// -  ∫ arccos(x) dx = x arccos(x) - √(1 - x²) + C
+/// -  ∫ arctan(x) dx = x arctan(x) - 1/2 ln(x² + 1) + C
+/// -  ∫ sinh(x) dx = cosh(x) + C
+/// -  ∫ cosh(x) dx = sinh(x) + C
+/// -  ∫ tanh(x) dx = ln(cosh(x)) + C
+/// -  ∫ ln(x) dx = x (ln(x) - 1) + C
+/// -  ∫ lg(x) dx = (1/ln(10)) · x (lg(x) - 1) +
+/// -  ∫ exp(x) dx = exp(x) + C
+/// -  ∫ Theta(x) dx = x Theta(x) + C
+///
+/// Closed form expression for antiderivatives of the Gamma and Digamma (Γ, Ψ)
+/// functions are tricky without evoking series representations, which
+/// is not implemented.
+pub fn unary_antiderivative(fn_name: &str, args: Vec<SExpr>) -> Option<SExpr> {
+    // make sure there is only a single argument since this function deals with unary functions
+    if args.len() != 1 {
+        return None;
+    }
+    // also make sure it is just an identifier, since integration by subsitution
+    // is a different beast
+    if let SExpr::Ident(_) = args[0] {
+        let x = args[0].clone();
+        match fn_name {
+            // ∫ sin(x) dx = -cos(x) + C
+            r"\sin" => Some(-x.unary(r"\cos")),
+            // ∫ cos(x) dx = sin(x) + C
+            r"\cos" => Some(x.unary(r"\sin")),
+            // ∫ tan(x) dx = -ln(|cos(x)|) + C = - ln(cos(x) cos(x))/2 + C
+            r"\tan" => Some(-((x.unary(r"\cos") * x.unary(r"\cos")).unary(r"\ln") / cnst(2))),
+            // ∫ arcsin(x) dx = x arcsin(x) + √(1 - x²) + C
+            r"\arcsin" => Some(x.clone() * x.unary(r"\arcsin") + (cnst(1) - x.pow(cnst(2))).sqrt()),
+            // ∫ arccos(x) dx = x arccos(x) - √(1 - x²) + C
+            r"\arccos" => Some(x.clone() * x.unary(r"\arccos") - (cnst(1) - x.pow(cnst(2))).sqrt()),
+            // ∫ arctan(x) dx = x arctan(x) - 1/2 ln(x² + 1) + C
+            r"\arctan" => Some(
+                x.clone() * x.unary(r"\arctan")
+                    - (cnst(0.5) * (x.pow(cnst(2)) + cnst(1)).unary(r"\ln")),
+            ),
+            // ∫ sinh(x) dx = cosh(x) + C
+            r"\sinh" => Some(x.unary(r"\cosh")),
+            // ∫ cosh(x) dx = sinh(x) + C
+            r"\cosh" => Some(x.unary(r"\sinh")),
+            // ∫ tanh(x) dx = ln(cosh(x)) + C
+            r"\tanh" => Some(x.unary(r"\cosh").unary(r"\ln")),
+            // ∫ ln(x) dx = x (ln(x) - 1) + C
+            r"\ln" => Some(x.clone() * (x.unary(r"\ln") - cnst(1))),
+            // ∫ lg(x) dx = (1/ln(10)) · x (ln(x) - 1) + C
+            // with \lg === \log
+            r"\lg" | r"\log" => {
+                Some((cnst(1) / cnst(10).unary(r"\ln")) * x.clone() * (x.unary(r"\ln") - cnst(1)))
+            }
+            // ∫ exp(x) dx = exp(x) + C
+            r"\exp" => Some(x.unary(r"\exp")),
+            // ∫ Theta(x) dx = x Theta(x) + C
+            r"\Theta" => Some(x.clone() * x.unary(r"\Theta")),
+            // ∫ Φ(x) dx = x Φ(x) + φ(x) C
+            // φ(x) = 1/√(2π) e^(-x²/2)
+            r"\Phi" => Some(
+                x.clone() * x.unary(r"\Phi")
+                    + (cnst(1) / (cnst(2) * SExpr::Ident(r"\pi".to_owned())).sqrt())
+                        * (-x.pow(cnst(2)) / cnst(2)).unary(r"\exp"),
+            ),
+            _ => None,
+        }
+    } else {
+        None
+    }
+}
 
 /// https://docs.rs/statrs/latest/x86_64-pc-windows-msvc/src/statrs/function/gamma.rs.html#373-412
 /// Computes the Digamma function which is defined as the derivative of

@@ -9,7 +9,12 @@ use std::{
 };
 
 use crate::{
-    error::{Error, SpanInfo}, factorial, lookup_env, parse::precedence, predefined::PREDEFINED, utils::{snap_to_int, Either, Vars}, Env
+    error::{Error, SpanInfo},
+    factorial, lookup_env,
+    parse::precedence,
+    predefined::PREDEFINED,
+    utils::{snap_to_int, Either, Vars},
+    Env,
 };
 
 #[derive(Debug)]
@@ -97,7 +102,7 @@ pub enum Expr {
 
     /// a partial derivative consisting of
     /// - a variable name to differentiate with respect to
-    /// - an expression to differenciate
+    /// - an expression to differentiate
     Ddx(String, Box<Expr>, SpanInfo),
 }
 
@@ -165,6 +170,84 @@ pub enum SExpr {
     Int(Box<SExpr>, Box<SExpr>, String, Box<SExpr>),
 }
 
+/// Negation of an [`SExpr`]
+impl Neg for SExpr {
+    type Output = SExpr;
+    fn neg(self) -> Self::Output {
+        SExpr::Neg(Box::new(self))
+    }
+}
+/// Addition for [`SExpr`]
+impl Add for SExpr {
+    type Output = SExpr;
+    fn add(self, rhs: Self) -> Self::Output {
+        // make sure the sum is ordered
+        if self < rhs {
+            SExpr::Add(vec![self, rhs])
+        } else {
+            SExpr::Add(vec![rhs, self])
+        }
+    }
+}
+/// Multiplication for [`SExpr`]
+impl Mul for SExpr {
+    type Output = SExpr;
+    fn mul(self, rhs: Self) -> Self::Output {
+        // make sure the product is ordered
+        if self < rhs {
+            SExpr::Mul(vec![self, rhs])
+        } else {
+            SExpr::Mul(vec![rhs, self])
+        }
+    }
+}
+/// Subtraction for [`SExpr`]
+impl Sub for SExpr {
+    type Output = SExpr;
+    fn sub(self, rhs: Self) -> Self::Output {
+        self + (-rhs)
+    }
+}
+/// Division for [`SExpr`]
+impl Div for SExpr {
+    type Output = SExpr;
+    fn div(self, rhs: Self) -> Self::Output {
+        SExpr::Div(Box::new(self.clone()), Box::new(rhs))
+    }
+}
+/// A trait that allows [`i64`] and [`f64`] to be
+/// converted to the corresponding [`SExpr`]
+pub trait ToSExprConst {
+    fn to_const(&self) -> SExpr;
+}
+impl ToSExprConst for f64 {
+    fn to_const(&self) -> SExpr {
+        SExpr::Const(SVal::Real((*self).into()))
+    }
+}
+impl ToSExprConst for i64 {
+    fn to_const(&self) -> SExpr {
+        SExpr::Const(SVal::Int(*self))
+    }
+}
+pub fn cnst<T: ToSExprConst>(c: T) -> SExpr {
+    c.to_const()
+}
+impl SExpr {
+    /// Apply a unary function to an [`SExpr`] by name
+    pub fn unary(&self, fn_name: &str) -> Self {
+        SExpr::FnApp(fn_name.to_owned(), vec![self.clone()])
+    }
+    /// Create the square root of an [`SExpr`]
+    pub fn sqrt(&self) -> Self {
+        SExpr::Root(Box::new(cnst(2)), Box::new(self.clone()))
+    }
+    /// Take an [`SExpr`] to the power of another [`SExpr`]
+    pub fn pow(&self, rhs: Self) -> Self {
+        SExpr::Pow(Box::new(self.clone()), Box::new(rhs))
+    }
+}
+
 #[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 /// A Value for use in Expression manipulation and simplification.
 /// Derives many useful traits (`Hash, Eq, Ord` etc.) that [`Val`] cannot.
@@ -179,8 +262,8 @@ pub enum SVal {
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct SPredefinedFunction {
-    identifier: String,
-    param_count: Option<usize>,
+    pub identifier: String,
+    pub param_count: Option<usize>,
 }
 
 impl Display for Expr {
@@ -437,8 +520,8 @@ impl SVal {
         }
     }
 
-    pub fn is_numeric(&self) -> bool{
-        match self{
+    pub fn is_numeric(&self) -> bool {
+        match self {
             SVal::Int(_) => true,
             SVal::Real(_) => true,
             SVal::Lambda(_) => false,
@@ -460,6 +543,9 @@ pub fn sval_to_val(sval: SVal, env: &Env) -> Result<Val, Error> {
             }
         }
     }
+}
+pub fn _val_to_sval(val: Val) -> SVal {
+    val.into()
 }
 impl Display for SVal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -504,7 +590,7 @@ impl Into<SPredefinedFunction> for PredefinedFunction {
 }
 impl Into<PredefinedFunction> for SPredefinedFunction {
     fn into(self) -> PredefinedFunction {
-        if let Some(Val::Lambda(Either::Left(p))) = PREDEFINED.get(&self.identifier){
+        if let Some(Val::Lambda(Either::Left(p))) = PREDEFINED.get(&self.identifier) {
             p.clone()
         } else {
             unreachable!()
@@ -642,26 +728,38 @@ impl SExpr {
             ),
             SExpr::Neg(sexpr) => format!("-{}", sexpr.pretty(prec)),
             SExpr::Fac(sexpr) => format!("{}!", sexpr.pretty(prec)),
-            SExpr::Add(sexprs) => {
-                match sexprs.len(){
-                    0 => String::new(),
-                    1 => sexprs.first().unwrap().pretty(prec),
-                    _ => {
-                        let mut out = sexprs.last().unwrap().pretty(prec);
-                        for expr in sexprs.iter().rev().skip(1){
-                            if let SExpr::Neg(inner) = expr {
+            SExpr::Add(sexprs) => match sexprs.len() {
+                0 => String::new(),
+                1 => sexprs.first().unwrap().pretty(prec),
+                _ => {
+                    let mut sorted = sexprs.clone();
+                    sorted.sort_unstable();
+                    let mut out = sorted.last().unwrap().pretty(prec);
+
+                    for expr in sorted.iter().rev().skip(1) {
+                        match expr {
+                            SExpr::Neg(inner) => {
+                                let neg_prec = Some(precedence(expr));
                                 out.push_str("-");
-                                out.push_str(&inner.pretty(prec));
-                            } else {
+                                out.push_str(&inner.pretty(neg_prec));
+                            }
+                            SExpr::Const(val) if val.is_negative() => {
+                                out.push_str(&expr.pretty(prec));
+                            }
+                            _ => {
                                 out.push_str("+");
                                 out.push_str(&expr.pretty(prec));
                             }
                         }
-                        out
                     }
+                    out
                 }
-            }
-            SExpr::Mul(sexprs) => sexprs.iter().map(|expr| expr.pretty(prec)).join(r" "),
+            },
+            SExpr::Mul(sexprs) => sexprs
+                .iter()
+                .sorted()
+                .map(|expr| expr.pretty(prec))
+                .join(r" "),
             SExpr::Div(sexpr, sexpr1) => format!(
                 r"\frac{{ {} }}{{ {} }}",
                 sexpr.pretty(Some(0)),
@@ -821,11 +919,36 @@ impl Neg for &SVal {
 impl Sub for &SVal {
     type Output = Option<SVal>;
     fn sub(self, rhs: Self) -> Self::Output {
-        if let Some(neg) = -rhs{
-            if let Some(res) = self + &neg{
-                return Some(res)
+        if let Some(neg) = -rhs {
+            if let Some(res) = self + &neg {
+                return Some(res);
             }
         }
         None
+    }
+}
+
+impl SVal {
+    pub fn is_near(&self, n: i64) -> bool {
+        match self {
+            SVal::Int(i) => *i == n,
+            SVal::Real(x) => {
+                let x_int = x.round();
+                if (x_int - **x).abs() < f64::EPSILON && x.is_finite() {
+                    x_int as i64 == n
+                } else {
+                    false
+                }
+            }
+            SVal::Lambda(_) => false,
+        }
+    }
+
+    pub fn is_negative(&self) -> bool {
+        match self {
+            SVal::Int(i) => i.is_negative(),
+            SVal::Real(r) => r.is_sign_negative(),
+            SVal::Lambda(_) => false,
+        }
     }
 }
