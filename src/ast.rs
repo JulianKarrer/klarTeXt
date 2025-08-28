@@ -951,4 +951,12 @@ impl SVal {
             SVal::Lambda(_) => false,
         }
     }
+
+    pub fn to_f64(&self) -> Option<f64> {
+        match self {
+            SVal::Int(i) => Some(*i as f64),
+            SVal::Real(r) => Some((*r).into()),
+            SVal::Lambda(_) => None,
+        }
+    }
 }

@@ -637,7 +637,7 @@ fn analytic_integrals(sexpr: SExpr, env: &Env, fo: &HashSet<String>) -> SExpr {
     sexpr
 }
 
-fn antiderivative(
+pub fn antiderivative(
     sexpr: SExpr,
     env: &Env,
     fo: &HashSet<String>,
@@ -943,7 +943,7 @@ fn sexpr_contains_ident(sexpr: &SExpr, contains: &String) -> bool {
 }
 
 /// Evaluate an [`SExpr`] if possible. Evaluation of integrals is currently unsupported here.
-fn sexpr_eval(sexpr: &SExpr, env: &Env, fo: &HashSet<String>,) -> Result<SVal, ()> {
+pub fn sexpr_eval(sexpr: &SExpr, env: &Env, fo: &HashSet<String>,) -> Result<SVal, ()> {
     match sexpr {
         SExpr::Const(sval) => Ok(sval.to_owned()),
         SExpr::Ident(name) => {

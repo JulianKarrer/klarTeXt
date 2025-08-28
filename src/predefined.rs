@@ -207,7 +207,7 @@ pub static PREDEFINED: LazyLock<Env> = LazyLock::new(|| {
             Some(&deriv)
         }),
         // hyperbolic
-        predefined_unary_fn(r"\sinh", "hyperbolic sine", None, |x| x.cosh(), {
+        predefined_unary_fn(r"\sinh", "hyperbolic sine", None, |x| x.sinh(), {
             fn deriv(arg: Expr, s: SpanInfo) -> DerivRet {
                 (
                     Expr::FnApp(r"\cosh".to_owned(), vec![arg], s, s),

@@ -18,6 +18,7 @@
         \simplify{\int_{0}^{2\pi} {\ddx{x}\sin(x)} + \sin(x) + 5 \,dx} \\
         \simplify{\int_{-e}^{2\pi} (\sum_{i=2}^{5} \frac{x}{i})\,dx}   \\
         \simplify{\int_{0}^{\pi} \Phi(x) \,dx}                         \\
+        \simplify{\int_{-1}^{2} \frac{1}{x} \,dx}                      \\
         % \simplify{\int_{-1}^{5} \exp(x) + 2xy \,dx}                    \\
         % \simplify{\int_{-1}^{5} 2xy  \,dx}                             \\
         % f(x,i) = \int_{i}^{2i} \arccos(x^t)\,dt \\
@@ -52,7 +53,7 @@ The following set of rules is used repeatedly and recursively:
     \int f(x) + g(x) \,dx           & = \int f(x) \,dx  + \int g(x) \,dx                           & \text{sums}                                \\
     \int \sum_{i=a}^{b} f(x,i) \,dx & = \sum_{i=a}^{b} \int f(x,i) \,dx                            & \text{$\Sigma$-sums}                       \\
     \int \sum_{x=a}^{b} f(x) \,dx   & = x \left(\sum_{i=a}^{b} \int f(x)\right) +C                 & \text{shadowing $\Sigma$-sums}             \\
-    \int \prod_{x=a}^{b} f(x) \,dx  & = x \left(\prod_{i=a}^{b} \int f(x)\right) +C                & \text{shadowing $\prod$-products}          \\
+    \int \prod_{x=a}^{b} f(x) \,dx  & = x \left(\prod_{x=a}^{b} \int f(x)\right) +C                & \text{shadowing $\prod$-products}          \\
     \int \frac{f(x)}{g(y)} \,dx     & = \frac{1}{g(y)} \int f(x) \,dx                              & \text{fractions}                           \\
     \int \frac{n}{x} \,dx           & = n \ln(x)     +C                                            & \text{}                                    \\
     \int x^{n} \,dx                 & = \frac{x^{n+1}}{n+1}                                        & \text{if $n\neq -1$}                       \\

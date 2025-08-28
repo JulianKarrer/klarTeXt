@@ -28,6 +28,7 @@ mod parse;
 mod predefined;
 mod resolve_def;
 mod simplify;
+mod tests;
 mod utils;
 
 type Program = Vec<Stmt>;
